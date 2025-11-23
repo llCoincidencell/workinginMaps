@@ -9,7 +9,6 @@ const getUrl = (filename: string) => {
 };
 
 // Yüklenecek dosyaların listesi
-// DİKKAT: Filename kısmı, GitHub'daki dosya ismiyle BÜYÜK/KÜÇÜK HARF dahil birebir aynı olmalıdır.
 export const availableMaps = [
   { name: 'BOKA Sınırları', filename: 'BOKA.kmz' },
   { name: 'Ovalar', filename: 'OVALAR.kmz' }, 
