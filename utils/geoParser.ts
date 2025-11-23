@@ -10,14 +10,16 @@ export const detectFileType = (filename: string): FileType => {
   return FileType.UNKNOWN;
 };
 
-// Metin çözücü: Önce UTF-8 dener, bozuksa Türkçe (windows-1254) dener
+// --- YENİ: Akıllı Metin Çözücü ---
+// Dosya UTF-8 mi yoksa Türkçe (Windows-1254) mi kontrol eder ve ona göre çevirir.
 const decodeText = (buffer: Uint8Array): string => {
   const decoderUTF8 = new TextDecoder('utf-8', { fatal: true });
   try {
+    // Önce standart UTF-8 dene
     return decoderUTF8.decode(buffer);
   } catch (e) {
-    // UTF-8 hatası verirse Türkçe encoding dene
-    console.warn("UTF-8 decoding failed, trying windows-1254 for Turkish support");
+    // Hata verirse (bozuk karakter varsa) Türkçe Encoding (Windows-1254) dene
+    console.warn("UTF-8 decoding failed, switching to windows-1254 for Turkish characters.");
     const decoderTR = new TextDecoder('windows-1254'); 
     return decoderTR.decode(buffer);
   }
@@ -46,7 +48,7 @@ export const parseFile = async (file: File): Promise<any> => {
 };
 
 const parseKML = async (file: File): Promise<any> => {
-  // File.text() yerine buffer okuyup decode ediyoruz (Encoding sorunu için)
+  // text() yerine arrayBuffer okuyup decode ediyoruz
   const buffer = await file.arrayBuffer();
   const text = decodeText(new Uint8Array(buffer));
   
@@ -59,7 +61,7 @@ const parseKMZ = async (file: File): Promise<any> => {
   const zip = await JSZip.loadAsync(file);
   const files = Object.keys(zip.files);
   
-  // Tüm KML dosyalarını bul
+  // Arşivdeki tüm .kml dosyalarını bul
   const kmlFiles = files.filter(f => 
     f.toLowerCase().endsWith('.kml') && 
     !f.startsWith('._') && 
@@ -74,13 +76,14 @@ const parseKMZ = async (file: File): Promise<any> => {
   const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
 
   for (const kmlFileName of kmlFiles) {
-    // String yerine Uint8Array oku (Encoding kontrolü için)
+    // String yerine Uint8Array (byte) olarak oku
     const kmlData = await zip.file(kmlFileName)?.async('uint8array');
     if (!kmlData) continue;
 
+    // Byte verisini doğru karakter setine göre metne çevir
     let kmlContent = decodeText(kmlData);
 
-    // Resim ikonlarını (blob) işle
+    // Resim ikonlarını işle
     for (const relativePath of files) {
       if (relativePath.includes('__MACOSX') || relativePath.startsWith('._')) continue;
       
@@ -88,38 +91,33 @@ const parseKMZ = async (file: File): Promise<any> => {
       if (!imageExtensions.some(ext => lowerPath.endsWith(ext))) continue;
 
       const fileName = relativePath.split('/').pop();
-      // Basit kontrol: dosya adı KML içinde geçiyor mu?
       if (!fileName || !kmlContent.includes(fileName)) continue;
 
       const fileData = await zip.file(relativePath)?.async('blob');
       if (fileData) {
         const imageUrl = URL.createObjectURL(fileData);
         
-        // Regex ile değiştir (Slaç yönlerini de hesaba kat)
         try {
-          // Tam yol değişimi
           const safePath = relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           kmlContent = kmlContent.replace(new RegExp(safePath, 'g'), imageUrl);
 
-          // Sadece dosya adı değişimi
           const safeFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           kmlContent = kmlContent.replace(new RegExp(safeFileName, 'g'), imageUrl);
         } catch (err) {
-          console.warn('Image replacement regex error:', err);
+          console.warn('Image replacement error:', err);
         }
       }
     }
 
-    // Parse et ve birleştir
+    // GeoJSON'a çevir
     try {
       const parser = new DOMParser();
       const kmlDom = parser.parseFromString(kmlContent, 'text/xml');
       
-      // Hata kontrolü: XML parse edilemediyse
       const parserError = kmlDom.querySelector('parsererror');
       if (parserError) {
         console.warn(`XML Parsing Error in ${kmlFileName}:`, parserError.textContent);
-        continue;
+        continue; 
       }
 
       const geoJson = toGeoJSON.kml(kmlDom);
@@ -127,7 +125,7 @@ const parseKMZ = async (file: File): Promise<any> => {
         combinedFeatures.push(...geoJson.features);
       }
     } catch (err) {
-      console.warn(`KML to GeoJSON failed for ${kmlFileName}:`, err);
+      console.warn(`Conversion failed for ${kmlFileName}:`, err);
     }
   }
 
