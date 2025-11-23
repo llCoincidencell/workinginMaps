@@ -3,6 +3,7 @@ import * as toGeoJSON from '@tmcw/togeojson';
 import { FileType } from '../types';
 
 export const detectFileType = (filename: string): FileType => {
+  // URL parametrelerini temizle (örn: dosya.kmz?raw=true -> dosya.kmz)
   const cleanName = filename.split('?')[0].toLowerCase();
   
   if (cleanName.endsWith('.kml')) return FileType.KML;
@@ -24,9 +25,10 @@ export const parseFile = async (file: File): Promise<any> => {
       return await parseKML(file);
     }
   } catch (e: any) {
-    // JSZip'ten gelen "Corrupted zip" hatalarını kullanıcı dostu dile çevir
-    if (e.message && (e.message.includes('Corrupted zip') || e.message.includes('End of data'))) {
-      throw new Error('Dosya içeriği bozuk veya eksik indirildi. GitHub\'daki dosyanın sağlam olduğundan emin olun.');
+    // JSZip'ten gelen teknik hataları kullanıcı dostu dile çevir
+    const msg = e.message || '';
+    if (msg.includes('Corrupted zip') || msg.includes('End of data') || msg.includes('signature not found')) {
+      throw new Error('KMZ dosyası bozuk veya tam indirilemedi. Dosya boş olabilir.');
     }
     throw e;
   }
@@ -42,13 +44,19 @@ const parseKML = async (file: File): Promise<any> => {
 const parseKMZ = async (file: File): Promise<any> => {
   const zip = await JSZip.loadAsync(file);
   
-  // 1. KML dosyasını bul
-  let kmlFileName = Object.keys(zip.files).find(filename => {
-    const lowName = filename.toLowerCase();
-    return lowName.endsWith('.kml') && 
-           !filename.includes('__MACOSX') && 
-           !filename.startsWith('._');
-  });
+  // İYİLEŞTİRME: Doğru KML dosyasını bulma stratejisi
+  // 1. Önce standart 'doc.kml' dosyasını kök dizinde ara (Google Earth standardı)
+  let kmlFileName = Object.keys(zip.files).find(f => f.toLowerCase() === 'doc.kml');
+
+  // 2. Bulunamazsa, herhangi bir .kml dosyasını ara (Sistem dosyaları hariç)
+  if (!kmlFileName) {
+    kmlFileName = Object.keys(zip.files).find(filename => {
+      const lowName = filename.toLowerCase();
+      return lowName.endsWith('.kml') && 
+             !filename.includes('__MACOSX') && 
+             !filename.startsWith('._');
+    });
+  }
   
   if (!kmlFileName) {
     throw new Error('Geçersiz KMZ: Arşiv içinde okunabilir bir KML dosyası bulunamadı.');
@@ -59,7 +67,7 @@ const parseKMZ = async (file: File): Promise<any> => {
     throw new Error('KMZ içeriğinden KML okunamadı.');
   }
 
-  // 2. Resim dosyalarını işle
+  // 3. Resim dosyalarını işle (Gömülü ikonlar için)
   const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
   const fileNames = Object.keys(zip.files);
 
@@ -73,10 +81,12 @@ const parseKMZ = async (file: File): Promise<any> => {
       if (fileData) {
         const imageUrl = URL.createObjectURL(fileData);
         
+        // Regex ile dosya yollarını değiştir
         const safePath = relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regexPath = new RegExp(safePath, 'g');
         kmlContent = kmlContent.replace(regexPath, imageUrl);
 
+        // Sadece dosya ismini de değiştirmeyi dene (bazı KML'ler sadece ismi referans alır)
         const fileName = relativePath.split('/').pop() || relativePath;
         if (fileName !== relativePath) {
              const safeFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
