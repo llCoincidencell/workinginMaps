@@ -15,7 +15,7 @@ export const availableMaps = [
   { name: 'BOKA Sınırları', filename: 'BOKA.kmz' },
   { name: 'Ovalar', filename: 'OVALAR (4).kmz' },
   { name: 'Ovalar', filename: 'OVALAR.kmz' },
-  { name: 'Su Tahsis Alanları', filename: 'SU TAHSİS ALANLARI (9).kmz' },
+  { name: 'Su Tahsis Alanları', filename: 'SU_tahsis_alanlari.kmz' },
   { name: 'Tüm Korunan Alanlar', filename: 'tum_korunan_alanlar.kmz' }
 ].map(map => ({
   name: map.name,
