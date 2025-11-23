@@ -3,7 +3,6 @@ import * as toGeoJSON from '@tmcw/togeojson';
 import { FileType } from '../types';
 
 export const detectFileType = (filename: string): FileType => {
-  // URL parametrelerini temizle (örn: dosya.kmz?raw=true -> dosya.kmz)
   const cleanName = filename.split('?')[0].toLowerCase();
   
   if (cleanName.endsWith('.kml')) return FileType.KML;
@@ -18,10 +17,18 @@ export const parseFile = async (file: File): Promise<any> => {
     throw new Error('Desteklenmeyen dosya formatı. Lütfen .kml veya .kmz dosyası yükleyin.');
   }
 
-  if (type === FileType.KMZ) {
-    return parseKMZ(file);
-  } else {
-    return parseKML(file);
+  try {
+    if (type === FileType.KMZ) {
+      return await parseKMZ(file);
+    } else {
+      return await parseKML(file);
+    }
+  } catch (e: any) {
+    // JSZip'ten gelen "Corrupted zip" hatalarını kullanıcı dostu dile çevir
+    if (e.message && (e.message.includes('Corrupted zip') || e.message.includes('End of data'))) {
+      throw new Error('Dosya içeriği bozuk veya eksik indirildi. GitHub\'daki dosyanın sağlam olduğundan emin olun.');
+    }
+    throw e;
   }
 };
 
@@ -35,8 +42,7 @@ const parseKML = async (file: File): Promise<any> => {
 const parseKMZ = async (file: File): Promise<any> => {
   const zip = await JSZip.loadAsync(file);
   
-  // İYİLEŞTİRME: __MACOSX klasörlerini ve ._ ile başlayan gizli dosyaları yoksay
-  // Sadece gerçek KML dosyasını bul
+  // 1. KML dosyasını bul
   let kmlFileName = Object.keys(zip.files).find(filename => {
     const lowName = filename.toLowerCase();
     return lowName.endsWith('.kml') && 
@@ -53,18 +59,15 @@ const parseKMZ = async (file: File): Promise<any> => {
     throw new Error('KMZ içeriğinden KML okunamadı.');
   }
 
-  // 2. Resim dosyalarını işle (Gömülü ikonlar için)
+  // 2. Resim dosyalarını işle
   const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
-  
   const fileNames = Object.keys(zip.files);
 
   for (const relativePath of fileNames) {
-    // Gizli dosyaları atla
     if (relativePath.includes('__MACOSX') || relativePath.startsWith('._')) continue;
 
     const lowerPath = relativePath.toLowerCase();
     
-    // Eğer dosya bir resimse
     if (imageExtensions.some(ext => lowerPath.endsWith(ext))) {
       const fileData = await zip.file(relativePath)?.async('blob');
       if (fileData) {
