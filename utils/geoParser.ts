@@ -18,10 +18,18 @@ export const parseFile = async (file: File): Promise<any> => {
     throw new Error('Desteklenmeyen dosya formatı. Lütfen .kml veya .kmz dosyası yükleyin.');
   }
 
-  if (type === FileType.KMZ) {
-    return parseKMZ(file);
-  } else {
-    return parseKML(file);
+  try {
+    if (type === FileType.KMZ) {
+      return await parseKMZ(file);
+    } else {
+      return await parseKML(file);
+    }
+  } catch (e: any) {
+    const msg = e.message || '';
+    if (msg.includes('Corrupted zip') || msg.includes('End of data') || msg.includes('signature not found')) {
+      throw new Error('KMZ dosyası bozuk veya tam indirilemedi.');
+    }
+    throw e;
   }
 };
 
@@ -34,59 +42,77 @@ const parseKML = async (file: File): Promise<any> => {
 
 const parseKMZ = async (file: File): Promise<any> => {
   const zip = await JSZip.loadAsync(file);
+  const files = Object.keys(zip.files);
   
-  // İYİLEŞTİRME: __MACOSX klasörlerini ve ._ ile başlayan gizli dosyaları yoksay
-  // Sadece gerçek KML dosyasını bul
-  let kmlFileName = Object.keys(zip.files).find(filename => {
-    const lowName = filename.toLowerCase();
-    return lowName.endsWith('.kml') && 
-           !filename.includes('__MACOSX') && 
-           !filename.startsWith('._');
-  });
-  
-  if (!kmlFileName) {
+  // STRATEJİ: KMZ içindeki TÜM .kml dosyalarını bul ve birleştir.
+  // Bazı KMZ'lerde 'doc.kml' sadece bir kapsayıcıdır, asıl veri başka bir kml'de olabilir.
+  const kmlFiles = files.filter(f => 
+    f.toLowerCase().endsWith('.kml') && 
+    !f.startsWith('._') && 
+    !f.includes('__MACOSX')
+  );
+
+  if (kmlFiles.length === 0) {
     throw new Error('Geçersiz KMZ: Arşiv içinde okunabilir bir KML dosyası bulunamadı.');
   }
 
-  let kmlContent = await zip.file(kmlFileName)?.async('string');
-  if (!kmlContent) {
-    throw new Error('KMZ içeriğinden KML okunamadı.');
-  }
-
-  // 2. Resim dosyalarını işle (Gömülü ikonlar için)
+  const combinedFeatures: any[] = [];
   const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
-  
-  const fileNames = Object.keys(zip.files);
 
-  for (const relativePath of fileNames) {
-    // Gizli dosyaları atla
-    if (relativePath.includes('__MACOSX') || relativePath.startsWith('._')) continue;
+  // Bulunan her KML dosyasını işle
+  for (const kmlFileName of kmlFiles) {
+    let kmlContent = await zip.file(kmlFileName)?.async('string');
+    if (!kmlContent) continue;
 
-    const lowerPath = relativePath.toLowerCase();
-    
-    // Eğer dosya bir resimse
-    if (imageExtensions.some(ext => lowerPath.endsWith(ext))) {
+    // Resim dosyalarını (ikonları) işle ve KML içine göm
+    // Not: Performans için sadece KML içeriğinde adı geçen resimleri işliyoruz
+    for (const relativePath of files) {
+      if (relativePath.includes('__MACOSX') || relativePath.startsWith('._')) continue;
+      
+      const lowerPath = relativePath.toLowerCase();
+      if (!imageExtensions.some(ext => lowerPath.endsWith(ext))) continue;
+
+      // Dosya adı KML içinde geçiyor mu kontrol et (Basit optimizasyon)
+      const fileName = relativePath.split('/').pop();
+      if (!fileName || !kmlContent.includes(fileName)) continue;
+
       const fileData = await zip.file(relativePath)?.async('blob');
       if (fileData) {
         const imageUrl = URL.createObjectURL(fileData);
         
+        // Tam yol değişimi
         const safePath = relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regexPath = new RegExp(safePath, 'g');
-        kmlContent = kmlContent.replace(regexPath, imageUrl);
+        kmlContent = kmlContent.replace(new RegExp(safePath, 'g'), imageUrl);
 
-        const fileName = relativePath.split('/').pop() || relativePath;
-        if (fileName !== relativePath) {
-             const safeFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-             const regexFile = new RegExp(safeFileName, 'g');
-             kmlContent = kmlContent.replace(regexFile, imageUrl);
-        }
+        // Sadece dosya adı değişimi
+        const safeFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        kmlContent = kmlContent.replace(new RegExp(safeFileName, 'g'), imageUrl);
       }
+    }
+
+    // KML'i GeoJSON'a çevir
+    try {
+      const parser = new DOMParser();
+      const kmlDom = parser.parseFromString(kmlContent, 'text/xml');
+      const geoJson = toGeoJSON.kml(kmlDom);
+      
+      if (geoJson && geoJson.features) {
+        combinedFeatures.push(...geoJson.features);
+      }
+    } catch (err) {
+      console.warn(`KML ayrıştırılamadı (${kmlFileName}):`, err);
     }
   }
 
-  const parser = new DOMParser();
-  const kml = parser.parseFromString(kmlContent, 'text/xml');
-  return toGeoJSON.kml(kml);
+  if (combinedFeatures.length === 0) {
+    // Hata fırlatmak yerine boş koleksiyon dönmeyelim, üst katmanda hata verelim
+    return { type: 'FeatureCollection', features: [] };
+  }
+
+  return {
+    type: 'FeatureCollection',
+    features: combinedFeatures
+  };
 };
 
 export const getRandomColor = () => {
