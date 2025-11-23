@@ -56,19 +56,17 @@ const App: React.FC = () => {
     setError(null);
 
     try {
-      // Önbellek sorununu çözmek için timestamp ekle
-      const response = await fetch(`${url}?t=${Date.now()}`);
+      const fetchUrl = `${url}?t=${Date.now()}`;
+      const response = await fetch(fetchUrl);
       
       if (!response.ok) {
-        if (response.status === 404) throw new Error("Dosya GitHub'da bulunamadı (404). İsmi kontrol edin.");
+        if (response.status === 404) throw new Error(`Dosya bulunamadı (404). İsmi kontrol edin: ${url}`);
         throw new Error(`İndirme hatası (${response.status})`);
       }
       
       const blob = await response.blob();
-
-      // GÜVENLİK KONTROLÜ: Dosya çok küçükse (örn: bozuk veya boşsa)
       if (blob.size < 100) {
-        throw new Error(`GitHub'daki dosya bozuk veya boş görünüyor (Boyut: ${blob.size} byte). Lütfen dosyayı GitHub'a tekrar yükleyin.`);
+        throw new Error(`Dosya boş veya çok küçük (${blob.size} byte).`);
       }
 
       let filename = url.substring(url.lastIndexOf('/') + 1) || 'harita.kml';
@@ -77,6 +75,14 @@ const App: React.FC = () => {
       const file = new File([blob], filename, { type: blob.type });
       const geoJsonData = await parseFile(file);
       
+      const featureCount = geoJsonData?.features?.length || 0;
+      if (featureCount === 0) {
+        throw new Error("Dosya indirildi ancak içinde harita verisi (Feature) bulunamadı.");
+      }
+
+      // BAŞARILI BİLGİLENDİRME
+      // alert(`${name} başarıyla yüklendi! (${featureCount} adet çizim)`);
+
       const coveredLayers = checkCoverage(geoJsonData, layers);
       if (coveredLayers.length > 0) {
         setAnalysisResult({
@@ -117,6 +123,11 @@ const App: React.FC = () => {
       const file = files[0];
       const geoJsonData = await parseFile(file);
       
+      const featureCount = geoJsonData?.features?.length || 0;
+      if (featureCount === 0) {
+        throw new Error("Dosyanın içi boş veya okunamadı.");
+      }
+
       const intersections = checkIntersections(geoJsonData, layers);
       setAnalysisResult({
         isOpen: true,
