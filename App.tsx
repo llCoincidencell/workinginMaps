@@ -1,8 +1,11 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Layers, Menu, Globe2, AlertCircle, X, CloudDownload, Check, Loader2 } from 'lucide-react';
 import { MapView } from './components/MapView';
 import { LayerList } from './components/LayerList';
+import { ResultModal } from './components/ResultModal';
 import { parseFile, getRandomColor } from './utils/geoParser';
+import { checkIntersections, checkCoverage } from './utils/spatialAnalysis'; // checkCoverage eklendi
 import { MapLayer } from './types';
 import { v4 as uuidv4 } from 'uuid';
 import { availableMaps, USER, REPO } from './data/githubMaps';
@@ -11,7 +14,6 @@ const App: React.FC = () => {
   const [layers, setLayers] = useState<MapLayer[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(false);
-  // Hangi haritanın o an yüklendiğini takip etmek için
   const [loadingMapUrl, setLoadingMapUrl] = useState<string | null>(null);
   
   const [error, setError] = useState<string | null>(null);
@@ -20,6 +22,19 @@ const App: React.FC = () => {
   const [focusTrigger, setFocusTrigger] = useState<{id: string, timestamp: number} | null>(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
+  // Analiz Sonuçları State'i
+  const [analysisResult, setAnalysisResult] = useState<{
+    isOpen: boolean, 
+    results: string[], 
+    fileName: string,
+    type: 'intersection' | 'coverage'
+  }>({
+    isOpen: false,
+    results: [],
+    fileName: '',
+    type: 'intersection'
+  });
+
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener('resize', handleResize);
@@ -27,16 +42,13 @@ const App: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Konfigürasyon kontrolü
   useEffect(() => {
     if (USER === 'KULLANICI_ADINIZ' || REPO === 'REPO_ADINIZ') {
       setConfigError("GitHub yapılandırması eksik.");
     }
   }, []);
 
-  // GitHub'dan TEK BİR haritayı talep üzerine yükle
   const loadRemoteMap = async (name: string, url: string) => {
-    // Eğer zaten yüklüyse tekrar yükleme
     if (layers.some(l => l.name === name)) {
       alert("Bu harita zaten yüklü.");
       return;
@@ -50,24 +62,36 @@ const App: React.FC = () => {
       if (!response.ok) throw new Error(`Dosya indirilemedi (${response.status})`);
       
       const blob = await response.blob();
-      // Dosya ismini URL'den temizleyerek al
       let filename = url.substring(url.lastIndexOf('/') + 1) || 'harita.kml';
       filename = decodeURIComponent(filename).split('?')[0];
 
       const file = new File([blob], filename, { type: blob.type });
       const geoJsonData = await parseFile(file);
       
+      // -- ANALİZ (TERS YÖN) --
+      // Yeni yüklenen büyük harita (Polygon), mevcut küçük dosyaları (Point) kapsıyor mu?
+      // Sadece sonuç varsa modalı açalım ki kullanıcıyı sürekli rahatsız etmeyelim
+      const coveredLayers = checkCoverage(geoJsonData, layers);
+      
+      if (coveredLayers.length > 0) {
+        setAnalysisResult({
+          isOpen: true,
+          results: coveredLayers,
+          fileName: name,
+          type: 'coverage'
+        });
+      }
+      // -- ANALİZ SONU --
+
       const newLayer: MapLayer = {
         id: uuidv4(),
-        name: name, // Listeden gelen temiz ismi kullan
+        name: name,
         visible: true,
         data: geoJsonData,
         color: getRandomColor()
       };
 
       setLayers(prev => [...prev, newLayer]);
-      
-      // Harita yüklendiğinde menüyü kapat (Mobilde)
       if (isMobile) setIsSidebarOpen(false);
 
     } catch (err: any) {
@@ -89,6 +113,18 @@ const App: React.FC = () => {
       const file = files[0];
       const geoJsonData = await parseFile(file);
       
+      // -- ANALİZ (NORMAL YÖN) --
+      // Yüklenen dosya (Point), mevcut haritaların (Polygon) içinde mi?
+      const intersections = checkIntersections(geoJsonData, layers);
+      
+      setAnalysisResult({
+        isOpen: true,
+        results: intersections,
+        fileName: file.name,
+        type: 'intersection'
+      });
+      // -- ANALİZ SONU --
+
       const newLayer: MapLayer = {
         id: uuidv4(),
         name: file.name,
@@ -126,6 +162,15 @@ const App: React.FC = () => {
   return (
     <div className="flex h-screen bg-gray-100 overflow-hidden font-sans text-gray-900 relative">
       
+      {/* Analiz Sonuç Modalı */}
+      <ResultModal 
+        isOpen={analysisResult.isOpen}
+        onClose={() => setAnalysisResult(prev => ({ ...prev, isOpen: false }))}
+        results={analysisResult.results}
+        fileName={analysisResult.fileName}
+        type={analysisResult.type}
+      />
+
       {/* Yan Menü */}
       <div 
         className={`
@@ -192,12 +237,13 @@ const App: React.FC = () => {
 
           {/* DOSYA YÜKLEME */}
           <div className="mb-6">
-            <label className="flex flex-col items-center justify-center w-full h-20 border-2 border-dashed border-gray-300 rounded-xl hover:bg-gray-50 hover:border-indigo-400 transition-all cursor-pointer group active:scale-95">
-              <div className="flex items-center gap-2">
-                <Upload className="w-5 h-5 text-gray-400 group-hover:text-indigo-500 transition-colors" />
+            <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-gray-300 rounded-xl hover:bg-gray-50 hover:border-indigo-400 transition-all cursor-pointer group active:scale-95">
+              <div className="flex flex-col items-center justify-center pt-3 pb-4">
+                <Upload className="w-6 h-6 mb-2 text-gray-400 group-hover:text-indigo-500 transition-colors" />
                 <p className="text-sm text-gray-500 font-medium group-hover:text-indigo-600">
-                  {loading ? 'İşleniyor...' : 'Cihazdan Yükle'}
+                  {loading ? 'İşleniyor...' : 'KML / KMZ Yükle'}
                 </p>
+                <p className="text-[10px] text-gray-400 mt-1">Konum Analizi Otomatik Yapılır</p>
               </div>
               <input 
                 ref={fileInputRef}
@@ -215,7 +261,6 @@ const App: React.FC = () => {
             )}
           </div>
 
-          {/* AKTİF KATMANLAR */}
           <div className="mb-2 flex items-center gap-2 text-gray-800 font-semibold text-sm">
             <Layers size={16} />
             <h2>Aktif Katmanlar</h2>
