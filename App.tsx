@@ -1,35 +1,45 @@
-
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Layers, Menu, Globe2 } from 'lucide-react';
+import { Upload, Layers, Menu, Globe2, AlertCircle, X } from 'lucide-react';
 import { MapView } from './components/MapView';
 import { LayerList } from './components/LayerList';
-import { AnalysisModal } from './components/AnalysisModal';
 import { parseFile, getRandomColor } from './utils/geoParser';
-import { analyzeGeoData } from './services/geminiService';
 import { MapLayer } from './types';
 import { v4 as uuidv4 } from 'uuid';
-import { githubMaps } from './data/githubMaps';
+import { githubMaps, USER, REPO } from './data/githubMaps';
 
 const App: React.FC = () => {
   const [layers, setLayers] = useState<MapLayer[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  // State to trigger map focus
+  // Haritada odaklanma için trigger state
   const [focusTrigger, setFocusTrigger] = useState<{id: string, timestamp: number} | null>(null);
 
-  // Analysis State
-  const [analyzingId, setAnalyzingId] = useState<string | null>(null);
-  const [modalData, setModalData] = useState<{isOpen: boolean; title: string; content: string}>({
-    isOpen: false,
-    title: '',
-    content: ''
-  });
+  // Ekran genişliğini takip et (Mobil tespiti için)
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
-  // External Data Loading (GitHub or Sample Data)
   useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    
+    // Başlangıçta mobildeysek menüyü kapat
+    if (window.innerWidth < 768) {
+      setIsSidebarOpen(false);
+    }
+
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // GitHub verilerini yükle
+  useEffect(() => {
+    if (USER === 'KULLANICI_ADINIZ' || REPO === 'REPO_ADINIZ') {
+      setConfigError("GitHub yapılandırması eksik.");
+      return;
+    }
+
     const loadExternalMaps = async () => {
       if (githubMaps.length === 0) return;
 
@@ -41,23 +51,22 @@ const App: React.FC = () => {
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             
             const blob = await response.blob();
-            // URL'den dosya adını çıkar
-            const filename = url.substring(url.lastIndexOf('/') + 1) || 'external-map.kml';
-            
-            // Blob'u File objesine çevir
+            let filename = url.substring(url.lastIndexOf('/') + 1) || 'harita.kml';
+            filename = decodeURIComponent(filename); 
+            filename = filename.split('?')[0];
+
             const file = new File([blob], filename, { type: blob.type });
-            
             const geoJsonData = await parseFile(file);
             
             return {
               id: uuidv4(),
-              name: decodeURIComponent(filename),
+              name: filename,
               visible: true,
               data: geoJsonData,
               color: getRandomColor()
             } as MapLayer;
           } catch (err) {
-            console.error(`Failed to load map from ${url}:`, err);
+            console.error(`Harita yüklenemedi ${url}:`, err);
             return null;
           }
         });
@@ -67,14 +76,13 @@ const App: React.FC = () => {
         
         if (validLayers.length > 0) {
           setLayers(prev => {
-            // Çakışmaları önlemek için mevcut olmayanları ekle
             const existingIds = new Set(prev.map(p => p.id));
             const uniqueNewLayers = validLayers.filter(l => !existingIds.has(l.id));
             return [...prev, ...uniqueNewLayers];
           });
         }
       } catch (err) {
-        console.error("External map loading error:", err);
+        console.error("Dış kaynak hatası:", err);
       } finally {
         setLoading(false);
       }
@@ -103,12 +111,11 @@ const App: React.FC = () => {
       };
 
       setLayers(prev => [...prev, newLayer]);
-      if (!isSidebarOpen) setIsSidebarOpen(true);
+      if (isMobile) setIsSidebarOpen(false); // Mobilde yükleyince menüyü kapat
     } catch (err: any) {
       setError(err.message || "Dosya işlenirken hata oluştu");
     } finally {
       setLoading(false);
-      // Reset input so same file can be selected again if deleted
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -123,59 +130,49 @@ const App: React.FC = () => {
     setLayers(layers.filter(l => l.id !== id));
   };
 
-  const handleAnalyze = async (layer: MapLayer) => {
-    setAnalyzingId(layer.id);
-    try {
-      const analysis = await analyzeGeoData(layer.data, layer.name);
-      setModalData({
-        isOpen: true,
-        title: layer.name,
-        content: analysis
-      });
-    } catch (e) {
-       setError("Analiz başarısız oldu");
-    } finally {
-      setAnalyzingId(null);
-    }
-  };
-
   const handleLayerFocus = (id: string) => {
-    // Ensure the layer is visible when trying to focus
     setLayers(prev => prev.map(l => l.id === id ? { ...l, visible: true } : l));
-    
-    // Update trigger with timestamp to allow re-focusing the same layer
     setFocusTrigger({ id, timestamp: Date.now() });
+    if (isMobile) setIsSidebarOpen(false); // Mobilde tıklayınca haritayı görmek için menüyü kapat
   };
 
   return (
-    <div className="flex h-screen bg-gray-100 overflow-hidden font-sans text-gray-900">
+    <div className="flex h-screen bg-gray-100 overflow-hidden font-sans text-gray-900 relative">
       
-      {/* Sidebar */}
+      {/* Yan Menü */}
       <div 
         className={`
-          fixed inset-y-0 left-0 z-[1000] w-80 bg-white shadow-xl transform transition-transform duration-300 ease-in-out
+          fixed inset-y-0 left-0 z-[2000] w-80 bg-white shadow-2xl transform transition-transform duration-300 ease-in-out
           flex flex-col
           ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-          md:relative md:translate-x-0
-          ${!isSidebarOpen && 'md:-ml-80'}
         `}
       >
-        {/* Header */}
-        <div className="p-5 border-b border-gray-100 flex items-center gap-3 bg-indigo-600 text-white">
-          <Globe2 size={24} />
-          <h1 className="font-bold text-xl tracking-tight">GeoVisor</h1>
+        <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-indigo-600 text-white">
+          <div className="flex items-center gap-2">
+            <Globe2 size={24} />
+            <h1 className="font-bold text-lg tracking-tight">GeoVisor</h1>
+          </div>
+          {/* Mobilde Menü Kapatma Butonu */}
+          <button onClick={() => setIsSidebarOpen(false)} className="md:hidden text-white/80 hover:text-white">
+            <X size={24} />
+          </button>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-gray-300">
           
-          {/* Upload Section */}
+          {configError && (
+             <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs flex gap-2 items-start">
+               <AlertCircle size={16} className="shrink-0 mt-0.5" />
+               <p>{configError}</p>
+             </div>
+          )}
+
           <div className="mb-6">
-            <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-gray-300 rounded-xl hover:bg-gray-50 hover:border-indigo-400 transition-all cursor-pointer group">
-              <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                <Upload className="w-8 h-8 mb-2 text-gray-400 group-hover:text-indigo-500 transition-colors" />
+            <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-gray-300 rounded-xl hover:bg-gray-50 hover:border-indigo-400 transition-all cursor-pointer group active:scale-95">
+              <div className="flex flex-col items-center justify-center pt-3 pb-4">
+                <Upload className="w-6 h-6 mb-2 text-gray-400 group-hover:text-indigo-500 transition-colors" />
                 <p className="text-sm text-gray-500 font-medium group-hover:text-indigo-600">
-                  {loading ? 'İşleniyor...' : 'KML / KMZ Dosyası Yükle'}
+                  {loading ? 'İşleniyor...' : 'KML / KMZ Yükle'}
                 </p>
               </div>
               <input 
@@ -194,61 +191,48 @@ const App: React.FC = () => {
             )}
           </div>
 
-          {/* Layers List */}
-          <div className="mb-2 flex items-center gap-2 text-gray-800 font-semibold">
-            <Layers size={18} />
+          <div className="mb-2 flex items-center gap-2 text-gray-800 font-semibold text-sm">
+            <Layers size={16} />
             <h2>Aktif Katmanlar</h2>
           </div>
           <LayerList 
             layers={layers} 
             onToggle={toggleLayer} 
             onDelete={deleteLayer} 
-            onAnalyze={handleAnalyze}
             onFocus={handleLayerFocus}
-            analyzingId={analyzingId}
+            isLoading={loading}
           />
 
         </div>
 
-        {/* Footer */}
-        <div className="p-4 border-t border-gray-100 text-xs text-gray-400 text-center">
-          Desteklenen: .kml, .kmz
-          <br/>
-          Gemini 2.5 & Leaflet ile güçlendirilmiştir
+        <div className="p-3 border-t border-gray-100 text-[10px] text-gray-400 text-center">
+          GeoVisor © 2024
         </div>
       </div>
 
-      {/* Mobile Toggle Button */}
-      <button
-        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-        className="absolute top-4 left-4 z-[999] md:hidden p-2 bg-white rounded-md shadow-md text-gray-700"
-      >
-        <Menu size={24} />
-      </button>
+      {/* Menü Kapalıyken Mobilde Karartma Efekti */}
+      {isSidebarOpen && isMobile && (
+        <div 
+          className="fixed inset-0 bg-black/30 z-[1500] backdrop-blur-[1px]"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
 
-      {/* Map Area */}
-      <div className="flex-1 h-full relative z-0">
+      {/* Ana İçerik / Harita */}
+      <div className={`flex-1 h-full relative z-0 transition-all duration-300 ${isSidebarOpen && !isMobile ? 'ml-80' : 'ml-0'}`}>
         <MapView layers={layers} focusTrigger={focusTrigger} />
         
-        {/* Desktop Toggle for Sidebar */}
+        {/* Menü Açma Butonu */}
         <button
            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
            className={`
-             hidden md:flex absolute top-4 z-[400] p-2 bg-white hover:bg-gray-50 rounded-lg shadow-md text-gray-600 transition-all duration-300
-             ${isSidebarOpen ? 'left-4' : 'left-4'}
+             absolute top-4 left-4 z-[400] p-2.5 bg-white hover:bg-gray-50 rounded-lg shadow-lg text-gray-700 transition-all active:scale-95
+             ${isSidebarOpen && !isMobile ? 'hidden' : 'flex'}
            `}
-           style={{ left: isSidebarOpen ? '1rem' : '1rem' }}
         >
-          {isSidebarOpen ? <Menu className="rotate-180" size={20} /> : <Menu size={20} />}
+          <Menu size={20} />
         </button>
       </div>
-
-      <AnalysisModal 
-        isOpen={modalData.isOpen}
-        onClose={() => setModalData({...modalData, isOpen: false})}
-        title={modalData.title}
-        content={modalData.content}
-      />
     </div>
   );
 };
