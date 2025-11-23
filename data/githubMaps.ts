@@ -1,20 +1,28 @@
-// GITHUB YAPILANDIRMASI
-export const USER: string = 'llCoincidencell'; 
-export const REPO: string = 'workinginMaps';      
-const BRANCH = 'main';           
+// 1. GitHub Kullanıcı Adı
+export const USER: string = 'llCoincidencell';
 
-// URL oluşturucu
-const getUrl = (filename: string) => {
-  return `https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${encodeURIComponent(filename)}`;
-};
+// 2. GitHub Repo Adı
+export const REPO: string = 'workinginMaps';
 
-// Yüklenecek dosyaların listesi
-export const availableMaps = [
-  { name: 'BOKA Sınırları', filename: 'BOKA.kmz' },
-  { name: 'Ovalar', filename: 'OVALAR.kmz' }, 
-  { name: 'Su Tahsis Alanları', filename: 'SU_tahsis_alanlari.kmz' },
-  { name: 'Tüm Korunan Alanlar', filename: 'tum_korunan_alanlar.kmz' }
-].map(map => ({
-  name: map.name,
-  url: getUrl(map.filename)
-}));
+// 3. Branch adı
+const BRANCH = 'main';
+
+// RAW URL oluşturucu
+const getUrl = (filename: string) =>
+  `https://raw.githubusercontent.com/${USER}/${REPO}/${BRANCH}/${filename}`;
+
+// Harita listesi (RAW linkler)
+export const githubMaps = [
+  getUrl('BOKA.kmz'),
+  getUrl('OVALAR%20(4).kmz'),
+  getUrl('SU%20TAHSİS%20ALANLARI%20(9).kmz'),
+   getUrl('SU_tahsis.alanlari.kmz'),
+  getUrl('tum_korunan_alanlar.kmz'),
+  getUrl('OVALAR.kmz')
+];
+
+// Çalıştırıldığında üretilen RAW URL'ler:
+// https://raw.githubusercontent.com/llCoincidencell/workinginMaps/main/BOKA.kmz
+// https://raw.githubusercontent.com/llCoincidencell/workinginMaps/main/OVALAR%20(4).kmz
+// https://raw.githubusercontent.com/llCoincidencell/workinginMaps/main/SU%20TAHSİS%20ALANLARI%20(9).kmz
+// https://raw.githubusercontent.com/llCoincidencell/workinginMaps/main/tum_korunan_alanlar.kmz
