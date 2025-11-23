@@ -1,11 +1,10 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Layers, Menu, Globe2, AlertCircle, X, CloudDownload, Check, Loader2 } from 'lucide-react';
 import { MapView } from './components/MapView';
 import { LayerList } from './components/LayerList';
 import { ResultModal } from './components/ResultModal';
 import { parseFile, getRandomColor } from './utils/geoParser';
-import { checkIntersections, checkCoverage } from './utils/spatialAnalysis'; // checkCoverage eklendi
+import { checkIntersections, checkCoverage } from './utils/spatialAnalysis';
 import { MapLayer } from './types';
 import { v4 as uuidv4 } from 'uuid';
 import { availableMaps, USER, REPO } from './data/githubMaps';
@@ -22,7 +21,6 @@ const App: React.FC = () => {
   const [focusTrigger, setFocusTrigger] = useState<{id: string, timestamp: number} | null>(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
-  // Analiz Sonuçları State'i
   const [analysisResult, setAnalysisResult] = useState<{
     isOpen: boolean, 
     results: string[], 
@@ -58,21 +56,28 @@ const App: React.FC = () => {
     setError(null);
 
     try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`Dosya indirilemedi (${response.status})`);
+      // Önbellek sorununu çözmek için timestamp ekle
+      const response = await fetch(`${url}?t=${Date.now()}`);
+      
+      if (!response.ok) {
+        if (response.status === 404) throw new Error("Dosya GitHub'da bulunamadı (404). İsmi kontrol edin.");
+        throw new Error(`İndirme hatası (${response.status})`);
+      }
       
       const blob = await response.blob();
+
+      // GÜVENLİK KONTROLÜ: Dosya çok küçükse (örn: bozuk veya boşsa)
+      if (blob.size < 100) {
+        throw new Error(`GitHub'daki dosya bozuk veya boş görünüyor (Boyut: ${blob.size} byte). Lütfen dosyayı GitHub'a tekrar yükleyin.`);
+      }
+
       let filename = url.substring(url.lastIndexOf('/') + 1) || 'harita.kml';
       filename = decodeURIComponent(filename).split('?')[0];
 
       const file = new File([blob], filename, { type: blob.type });
       const geoJsonData = await parseFile(file);
       
-      // -- ANALİZ (TERS YÖN) --
-      // Yeni yüklenen büyük harita (Polygon), mevcut küçük dosyaları (Point) kapsıyor mu?
-      // Sadece sonuç varsa modalı açalım ki kullanıcıyı sürekli rahatsız etmeyelim
       const coveredLayers = checkCoverage(geoJsonData, layers);
-      
       if (coveredLayers.length > 0) {
         setAnalysisResult({
           isOpen: true,
@@ -81,7 +86,6 @@ const App: React.FC = () => {
           type: 'coverage'
         });
       }
-      // -- ANALİZ SONU --
 
       const newLayer: MapLayer = {
         id: uuidv4(),
@@ -96,7 +100,7 @@ const App: React.FC = () => {
 
     } catch (err: any) {
       console.error("Yükleme hatası:", err);
-      setError(`Harita yüklenemedi: ${err.message}`);
+      setError(`Hata: ${err.message}`);
     } finally {
       setLoadingMapUrl(null);
     }
@@ -113,17 +117,13 @@ const App: React.FC = () => {
       const file = files[0];
       const geoJsonData = await parseFile(file);
       
-      // -- ANALİZ (NORMAL YÖN) --
-      // Yüklenen dosya (Point), mevcut haritaların (Polygon) içinde mi?
       const intersections = checkIntersections(geoJsonData, layers);
-      
       setAnalysisResult({
         isOpen: true,
         results: intersections,
         fileName: file.name,
         type: 'intersection'
       });
-      // -- ANALİZ SONU --
 
       const newLayer: MapLayer = {
         id: uuidv4(),
@@ -162,7 +162,6 @@ const App: React.FC = () => {
   return (
     <div className="flex h-screen bg-gray-100 overflow-hidden font-sans text-gray-900 relative">
       
-      {/* Analiz Sonuç Modalı */}
       <ResultModal 
         isOpen={analysisResult.isOpen}
         onClose={() => setAnalysisResult(prev => ({ ...prev, isOpen: false }))}
@@ -171,7 +170,6 @@ const App: React.FC = () => {
         type={analysisResult.type}
       />
 
-      {/* Yan Menü */}
       <div 
         className={`
           fixed inset-y-0 left-0 z-[2000] w-80 bg-white shadow-2xl transform transition-transform duration-300 ease-in-out
@@ -198,7 +196,6 @@ const App: React.FC = () => {
              </div>
           )}
 
-          {/* HAZIR HARİTALAR LİSTESİ (GITHUB) */}
           <div className="mb-6">
             <div className="flex items-center gap-2 text-gray-800 font-semibold text-sm mb-3">
               <CloudDownload size={16} className="text-indigo-600" />
@@ -235,7 +232,6 @@ const App: React.FC = () => {
 
           <hr className="my-4 border-gray-100" />
 
-          {/* DOSYA YÜKLEME */}
           <div className="mb-6">
             <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-gray-300 rounded-xl hover:bg-gray-50 hover:border-indigo-400 transition-all cursor-pointer group active:scale-95">
               <div className="flex flex-col items-center justify-center pt-3 pb-4">
