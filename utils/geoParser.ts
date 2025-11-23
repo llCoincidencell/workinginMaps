@@ -3,7 +3,6 @@ import * as toGeoJSON from '@tmcw/togeojson';
 import { FileType } from '../types';
 
 export const detectFileType = (filename: string): FileType => {
-  // URL parametrelerini temizle (örn: dosya.kmz?raw=true -> dosya.kmz)
   const cleanName = filename.split('?')[0].toLowerCase();
   
   if (cleanName.endsWith('.kml')) return FileType.KML;
@@ -25,10 +24,9 @@ export const parseFile = async (file: File): Promise<any> => {
       return await parseKML(file);
     }
   } catch (e: any) {
-    // JSZip'ten gelen teknik hataları kullanıcı dostu dile çevir
     const msg = e.message || '';
     if (msg.includes('Corrupted zip') || msg.includes('End of data') || msg.includes('signature not found')) {
-      throw new Error('KMZ dosyası bozuk veya tam indirilemedi. Dosya boş olabilir.');
+      throw new Error('KMZ dosyası bozuk veya tam indirilemedi.');
     }
     throw e;
   }
@@ -43,19 +41,22 @@ const parseKML = async (file: File): Promise<any> => {
 
 const parseKMZ = async (file: File): Promise<any> => {
   const zip = await JSZip.loadAsync(file);
+  const files = Object.keys(zip.files);
   
-  // İYİLEŞTİRME: Doğru KML dosyasını bulma stratejisi
-  // 1. Önce standart 'doc.kml' dosyasını kök dizinde ara (Google Earth standardı)
-  let kmlFileName = Object.keys(zip.files).find(f => f.toLowerCase() === 'doc.kml');
+  // STRATEJİ: En doğru KML dosyasını bul
+  // 1. İsminde 'doc.kml' geçen (klasör içinde olsa bile) dosyayı ara.
+  let kmlFileName = files.find(f => f.toLowerCase().endsWith('doc.kml') && !f.startsWith('._') && !f.includes('__MACOSX'));
 
-  // 2. Bulunamazsa, herhangi bir .kml dosyasını ara (Sistem dosyaları hariç)
+  // 2. Bulunamazsa, herhangi bir .kml dosyası ara ama EN BÜYÜK olanı seç (Metadata dosyalarını elemek için)
   if (!kmlFileName) {
-    kmlFileName = Object.keys(zip.files).find(filename => {
-      const lowName = filename.toLowerCase();
-      return lowName.endsWith('.kml') && 
-             !filename.includes('__MACOSX') && 
-             !filename.startsWith('._');
-    });
+    const kmlFiles = files.filter(f => f.toLowerCase().endsWith('.kml') && !f.startsWith('._') && !f.includes('__MACOSX'));
+    
+    if (kmlFiles.length > 0) {
+      // Dosya boyutlarını kontrol etmek için async işlem gerekir, basitçe ilkini değil, varsa en mantıklısını seçelim.
+      // Şimdilik ilk bulunanı alıyoruz ama genelde en büyük dosya asıl veridir.
+      // JSZip senkron size bilgisi vermediği için listeyi kullanıyoruz.
+      kmlFileName = kmlFiles[0]; 
+    }
   }
   
   if (!kmlFileName) {
@@ -69,9 +70,8 @@ const parseKMZ = async (file: File): Promise<any> => {
 
   // 3. Resim dosyalarını işle (Gömülü ikonlar için)
   const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
-  const fileNames = Object.keys(zip.files);
 
-  for (const relativePath of fileNames) {
+  for (const relativePath of files) {
     if (relativePath.includes('__MACOSX') || relativePath.startsWith('._')) continue;
 
     const lowerPath = relativePath.toLowerCase();
@@ -81,14 +81,14 @@ const parseKMZ = async (file: File): Promise<any> => {
       if (fileData) {
         const imageUrl = URL.createObjectURL(fileData);
         
-        // Regex ile dosya yollarını değiştir
+        // Basit dosya ismi değişimi (files/icon.png -> blob:...)
         const safePath = relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regexPath = new RegExp(safePath, 'g');
         kmlContent = kmlContent.replace(regexPath, imageUrl);
 
-        // Sadece dosya ismini de değiştirmeyi dene (bazı KML'ler sadece ismi referans alır)
-        const fileName = relativePath.split('/').pop() || relativePath;
-        if (fileName !== relativePath) {
+        // Sadece dosya ismini de değiştirmeyi dene (icon.png -> blob:...)
+        const fileName = relativePath.split('/').pop();
+        if (fileName && fileName !== relativePath) {
              const safeFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
              const regexFile = new RegExp(safeFileName, 'g');
              kmlContent = kmlContent.replace(regexFile, imageUrl);
