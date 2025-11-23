@@ -70,10 +70,11 @@ interface MapViewProps {
 
 export const MapView: React.FC<MapViewProps> = ({ layers, focusTrigger }) => {
   
-  // Türkiye Sınırları (Kabaca)
+  // SADECE TÜRKİYE SINIRLARI
+  // Kullanıcının dışarı çıkmasını engellemek için koordinatlar kilitlendi.
   const turkeyBounds: L.LatLngBoundsExpression = [
-    [35.0, 25.0], // Güney Batı
-    [43.0, 46.0]  // Kuzey Doğu
+    [35.5, 25.5], // Güney Batı (Akdeniz açıkları)
+    [42.5, 45.0]  // Kuzey Doğu (Kafkaslar sınırı)
   ];
 
   // Özel renkli pin oluşturucu
@@ -96,12 +97,13 @@ export const MapView: React.FC<MapViewProps> = ({ layers, focusTrigger }) => {
 
   return (
     <MapContainer
-      center={[39.0, 35.5]} // Türkiye Merkezi
+      center={[39.0, 35.0]} // Türkiye'nin tam ortası
       zoom={6}
-      minZoom={5} // Çok uzaklaşmayı engelle
-      maxBounds={turkeyBounds} // Sadece Türkiye içinde gezmeye izin ver
-      maxBoundsViscosity={1.0} // Sınırlara çarpınca esnemeyi engelle
-      preferCanvas={true} // PERFORMANS AYARI: Binlerce çizgiyi kasmadan çizer
+      minZoom={6} // KİLİT: Dünyayı görmek için uzaklaşmayı engelle
+      maxZoom={18}
+      maxBounds={turkeyBounds} // KİLİT: Sadece Türkiye sınırları içinde gezilebilir
+      maxBoundsViscosity={1.0} // KİLİT: Kenarlara çarpınca esnemeyi engelle (Tam kilit)
+      preferCanvas={true} // PERFORMANS: Binlerce çizgiyi kasmadan çizer (Mobil için kritik)
       style={{ height: '100%', width: '100%', background: '#f8fafc' }}
       zoomControl={false} // Varsayılan zoom butonunu kapat (yerini değiştireceğiz)
     >
@@ -137,10 +139,11 @@ export const MapView: React.FC<MapViewProps> = ({ layers, focusTrigger }) => {
               return {
                 color: feature?.properties?.stroke || layer.color,
                 weight: feature?.properties?.['stroke-width'] || 3,
-                opacity: 0.8,
+                opacity: 0.9,
                 fillColor: feature?.properties?.fill || layer.color,
-                fillOpacity: 0.3,
-                smoothFactor: 1.5 // PERFORMANS: Çizgileri yumuşatarak işlemci yükünü azaltır
+                fillOpacity: 0.35,
+                // PERFORMANS: Bu değer artırıldı. Mobilde donmayı engeller, çizgileri basitleştirir.
+                smoothFactor: 2 
               };
             }}
             onEachFeature={(feature, leafletLayer) => {
