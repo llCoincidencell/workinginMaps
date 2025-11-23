@@ -1,131 +1,93 @@
+import JSZip from 'jszip';
+import * as toGeoJSON from '@tmcw/togeojson';
+import { FileType } from '../types';
 
-import { FeatureCollection, Geometry, Position } from 'geojson';
-import { MapLayer } from '../types';
-
-// Bir noktanın bir poligon içinde olup olmadığını kontrol eden Ray-Casting algoritması
-const isPointInPolygon = (point: Position, vs: Position[]): boolean => {
-  const x = point[0], y = point[1];
-  let inside = false;
-  for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
-    const xi = vs[i][0], yi = vs[i][1];
-    const xj = vs[j][0], yj = vs[j][1];
-    const intersect = ((yi > y) !== (yj > y)) &&
-      (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-    if (intersect) inside = !inside;
-  }
-  return inside;
+export const detectFileType = (filename: string): FileType => {
+  // URL parametrelerini temizle (örn: dosya.kmz?raw=true -> dosya.kmz)
+  const cleanName = filename.split('?')[0].toLowerCase();
+  
+  if (cleanName.endsWith('.kml')) return FileType.KML;
+  if (cleanName.endsWith('.kmz')) return FileType.KMZ;
+  return FileType.UNKNOWN;
 };
 
-// GeoJSON içindeki tüm koordinat noktalarını düzleştirip çıkarır
-const extractPoints = (geometry: Geometry): Position[] => {
-  const points: Position[] = [];
-
-  if (geometry.type === 'Point') {
-    points.push(geometry.coordinates);
-  } else if (geometry.type === 'Polygon') {
-    points.push(geometry.coordinates[0][0]); 
-  } else if (geometry.type === 'LineString') {
-    points.push(geometry.coordinates[0]); 
-    points.push(geometry.coordinates[geometry.coordinates.length - 1]); 
-  } else if (geometry.type === 'MultiPoint') {
-    points.push(...geometry.coordinates);
-  } else if (geometry.type === 'GeometryCollection') {
-    geometry.geometries.forEach(g => points.push(...extractPoints(g)));
-  }
+export const parseFile = async (file: File): Promise<any> => {
+  const type = detectFileType(file.name);
   
-  return points;
+  if (type === FileType.UNKNOWN) {
+    throw new Error('Desteklenmeyen dosya formatı. Lütfen .kml veya .kmz dosyası yükleyin.');
+  }
+
+  if (type === FileType.KMZ) {
+    return parseKMZ(file);
+  } else {
+    return parseKML(file);
+  }
 };
 
-// --- SENARYO 1: Yeni Dosya (Nokta) -> Mevcut Haritalar (Alan) İçinde mi? ---
-export const checkIntersections = (newData: FeatureCollection, existingLayers: MapLayer[]): string[] => {
-  const matchedLayers = new Set<string>();
+const parseKML = async (file: File): Promise<any> => {
+  const text = await file.text();
+  const parser = new DOMParser();
+  const kml = parser.parseFromString(text, 'text/xml');
+  return toGeoJSON.kml(kml);
+};
+
+const parseKMZ = async (file: File): Promise<any> => {
+  const zip = await JSZip.loadAsync(file);
   
-  // Yeni veriden noktaları çıkar
-  const testPoints: Position[] = [];
-  newData.features.forEach(feature => {
-    if (feature.geometry) {
-      testPoints.push(...extractPoints(feature.geometry));
-    }
-  });
+  // 1. KML dosyasını bul (Genellikle doc.kml veya kök dizindeki ilk .kml dosyasıdır)
+  let kmlFileName = Object.keys(zip.files).find(filename => filename.toLowerCase().endsWith('.kml'));
+  
+  if (!kmlFileName) {
+    throw new Error('Geçersiz KMZ: Arşiv içinde KML dosyası bulunamadı.');
+  }
 
-  if (testPoints.length === 0) return [];
+  let kmlContent = await zip.file(kmlFileName)?.async('string');
+  if (!kmlContent) {
+    throw new Error('KMZ içeriğinden KML okunamadı.');
+  }
 
-  // Mevcut katmanları tara
-  existingLayers.forEach(layer => {
-    if (!layer.visible) return;
+  // 2. Resim dosyalarını işle (Gömülü ikonlar için)
+  const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
+  
+  // Tüm dosya listesini al
+  const fileNames = Object.keys(zip.files);
 
-    let isInsideLayer = false;
+  for (const relativePath of fileNames) {
+    const lowerPath = relativePath.toLowerCase();
+    
+    // Eğer dosya bir resimse
+    if (imageExtensions.some(ext => lowerPath.endsWith(ext))) {
+      const fileData = await zip.file(relativePath)?.async('blob');
+      if (fileData) {
+        // Blob'dan geçici bir URL oluştur
+        const imageUrl = URL.createObjectURL(fileData);
+        
+        // KML içinde bu resmin geçtiği yolları bul ve değiştir.
+        // KMZ içinde yollar "files/img.png" veya sadece "img.png" olabilir.
+        // Regex ile özel karakterleri kaçır (escape)
+        const safePath = relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regexPath = new RegExp(safePath, 'g');
+        kmlContent = kmlContent.replace(regexPath, imageUrl);
 
-    layer.data.features.forEach(feature => {
-      if (isInsideLayer) return; 
-      if (!feature.geometry) return;
-
-      if (feature.geometry.type === 'Polygon') {
-        const polygonRing = feature.geometry.coordinates[0];
-        if (testPoints.some(p => isPointInPolygon(p, polygonRing))) {
-          isInsideLayer = true;
+        // Sadece dosya ismini değiştirmeyi dene (bazı KML'ler relative path kullanmaz)
+        const fileName = relativePath.split('/').pop() || relativePath;
+        if (fileName !== relativePath) {
+             const safeFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+             const regexFile = new RegExp(safeFileName, 'g');
+             kmlContent = kmlContent.replace(regexFile, imageUrl);
         }
-      } 
-      else if (feature.geometry.type === 'MultiPolygon') {
-        feature.geometry.coordinates.forEach(polygon => {
-          const polygonRing = polygon[0];
-          if (testPoints.some(p => isPointInPolygon(p, polygonRing))) {
-            isInsideLayer = true;
-          }
-        });
       }
-    });
-
-    if (isInsideLayer) {
-      matchedLayers.add(layer.name);
     }
-  });
+  }
 
-  return Array.from(matchedLayers);
+  // 3. Güncellenmiş KML'i parse et
+  const parser = new DOMParser();
+  const kml = parser.parseFromString(kmlContent, 'text/xml');
+  return toGeoJSON.kml(kml);
 };
 
-// --- SENARYO 2: Yeni Harita (Alan) -> Mevcut Dosyaları (Nokta) Kapsıyor mu? ---
-export const checkCoverage = (newPolygonData: FeatureCollection, existingLayers: MapLayer[]): string[] => {
-  const coveredLayers = new Set<string>();
-
-  // Yeni yüklenen haritadaki tüm Polygonları topla
-  const polygons: Position[][] = [];
-  
-  newPolygonData.features.forEach(feature => {
-    if (!feature.geometry) return;
-    if (feature.geometry.type === 'Polygon') {
-      polygons.push(feature.geometry.coordinates[0]);
-    } else if (feature.geometry.type === 'MultiPolygon') {
-      feature.geometry.coordinates.forEach(poly => polygons.push(poly[0]));
-    }
-  });
-
-  if (polygons.length === 0) return [];
-
-  // Mevcut katmanları (Kullanıcının önceden yüklediği noktalar) tara
-  existingLayers.forEach(layer => {
-    if (!layer.visible) return;
-
-    // Mevcut katmandaki noktaları çıkar
-    const layerPoints: Position[] = [];
-    layer.data.features.forEach(f => {
-      if (f.geometry) layerPoints.push(...extractPoints(f.geometry));
-    });
-
-    // Eğer bu katmandaki herhangi bir nokta, yeni yüklenen poligonlardan birinin içindeyse
-    let isCovered = false;
-    // Performans için: İlk eşleşen noktada döngüyü kır
-    for (const point of layerPoints) {
-      if (polygons.some(poly => isPointInPolygon(point, poly))) {
-        isCovered = true;
-        break; 
-      }
-    }
-
-    if (isCovered) {
-      coveredLayers.add(layer.name);
-    }
-  });
-
-  return Array.from(coveredLayers);
+export const getRandomColor = () => {
+  const colors = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef', '#f43f5e'];
+  return colors[Math.floor(Math.random() * colors.length)];
 };
