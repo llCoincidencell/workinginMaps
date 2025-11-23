@@ -35,11 +35,17 @@ const parseKML = async (file: File): Promise<any> => {
 const parseKMZ = async (file: File): Promise<any> => {
   const zip = await JSZip.loadAsync(file);
   
-  // 1. KML dosyasını bul (Genellikle doc.kml veya kök dizindeki ilk .kml dosyasıdır)
-  let kmlFileName = Object.keys(zip.files).find(filename => filename.toLowerCase().endsWith('.kml'));
+  // İYİLEŞTİRME: __MACOSX klasörlerini ve ._ ile başlayan gizli dosyaları yoksay
+  // Sadece gerçek KML dosyasını bul
+  let kmlFileName = Object.keys(zip.files).find(filename => {
+    const lowName = filename.toLowerCase();
+    return lowName.endsWith('.kml') && 
+           !filename.includes('__MACOSX') && 
+           !filename.startsWith('._');
+  });
   
   if (!kmlFileName) {
-    throw new Error('Geçersiz KMZ: Arşiv içinde KML dosyası bulunamadı.');
+    throw new Error('Geçersiz KMZ: Arşiv içinde okunabilir bir KML dosyası bulunamadı.');
   }
 
   let kmlContent = await zip.file(kmlFileName)?.async('string');
@@ -50,27 +56,24 @@ const parseKMZ = async (file: File): Promise<any> => {
   // 2. Resim dosyalarını işle (Gömülü ikonlar için)
   const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
   
-  // Tüm dosya listesini al
   const fileNames = Object.keys(zip.files);
 
   for (const relativePath of fileNames) {
+    // Gizli dosyaları atla
+    if (relativePath.includes('__MACOSX') || relativePath.startsWith('._')) continue;
+
     const lowerPath = relativePath.toLowerCase();
     
     // Eğer dosya bir resimse
     if (imageExtensions.some(ext => lowerPath.endsWith(ext))) {
       const fileData = await zip.file(relativePath)?.async('blob');
       if (fileData) {
-        // Blob'dan geçici bir URL oluştur
         const imageUrl = URL.createObjectURL(fileData);
         
-        // KML içinde bu resmin geçtiği yolları bul ve değiştir.
-        // KMZ içinde yollar "files/img.png" veya sadece "img.png" olabilir.
-        // Regex ile özel karakterleri kaçır (escape)
         const safePath = relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regexPath = new RegExp(safePath, 'g');
         kmlContent = kmlContent.replace(regexPath, imageUrl);
 
-        // Sadece dosya ismini değiştirmeyi dene (bazı KML'ler relative path kullanmaz)
         const fileName = relativePath.split('/').pop() || relativePath;
         if (fileName !== relativePath) {
              const safeFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -81,7 +84,6 @@ const parseKMZ = async (file: File): Promise<any> => {
     }
   }
 
-  // 3. Güncellenmiş KML'i parse et
   const parser = new DOMParser();
   const kml = parser.parseFromString(kmlContent, 'text/xml');
   return toGeoJSON.kml(kml);
