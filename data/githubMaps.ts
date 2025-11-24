@@ -11,7 +11,7 @@ const getUrl = (filename: string) => {
 // Yüklenecek dosyaların listesi
 export const availableMaps = [
   { name: 'BOKA Sınırları', filename: 'BOKA.kmz' },
-  { name: 'Ovalar', filename: 'ovalar4.kmz' },
+  { name: 'Ovalar', filename: 'OVALAR4.kmz' }, // Düzeltildi: OVALAR.kmz
   { name: 'Su Tahsis Alanları', filename: 'SU_tahsis_alanlari.kmz' },
   { name: 'Tüm Korunan Alanlar', filename: 'tum_korunan_alanlar.kmz' }
 ].map(map => ({
