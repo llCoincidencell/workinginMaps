@@ -25,30 +25,30 @@ const decodeText = (buffer: Uint8Array): string => {
 };
 
 // ---------------------
-// KML Temizleyici (AGRESİF)
+// KML Temizleyici (GÜVENLİ VE HATA TOLERANSLI)
 // ---------------------
 const cleanKMLText = (text: string): string => {
+  // CDATA bloklarını koru, sadece XML başlığını ve yorumları temizle.
+  // Namespace (xmlns) tanımlarını kaldırarak DOMParser uyumluluğunu artır.
   return text
     .replace(/^\uFEFF/, '') // BOM temizle
     .replace(/<!--[\s\S]*?-->/g, '') // Yorumları sil
-    .replace(/<\?xml.*?\?>/g, '') // XML başlığını sil (DOMParser için)
-    .replace(/xmlns(:[a-z0-9]+)?="[^"]*"/g, '') // TÜM Namespace'leri sil (En önemli düzeltme)
-    .replace(/<kml\s+[^>]*>/g, '<kml>') // KML etiketini temizle
-    .replace(/&(?!amp;|lt;|gt;|quot;|apos;)/g, '&amp;') // Bozuk karakterleri düzelt
-    .replace(/<!\[CDATA\[/g, '') // CDATA etiketlerini kaldır, içeriği tut
-    .replace(/\]\]>/g, '')
+    .replace(/<\?xml.*?\?>/g, '') // XML başlığını sil (DOMParser bazen takılır)
+    .replace(/\s+xmlns(:[a-zA-Z0-9]+)?=(["']).*?\2/g, '') // xmlns="..." özelliklerini sil
+    .replace(/xmlns(:[a-zA-Z0-9]+)?="[^"]*"/g, '') // Basit xmlns silme (regex fallback)
+    // Sadece kaçış yapılmamış & işaretlerini düzelt (# ile başlayan entity'lere dokunma)
+    .replace(/&(?!amp;|lt;|gt;|quot;|apos;|#)/g, '&amp;') 
     .trim();
 };
 
 // ---------------------
-// KML Doğrulayıcı (Sadece Uyarı)
+// KML Doğrulayıcı
 // ---------------------
 const validateKML = (kmlDom: Document) => {
   const parserError = kmlDom.querySelector('parsererror');
   if (parserError) {
-    console.warn("XML Parser Uyarısı (Yoksayılıyor):", parserError.textContent);
+    console.error("XML Parser Hatası:", parserError.textContent);
   }
-  // Placemark kontrolü kaldırıldı. Boşsa boş dönsün, hata vermesin.
 };
 
 // ---------------------
@@ -68,14 +68,15 @@ const parseKML = async (file: File): Promise<any> => {
 };
 
 // ---------------------
-// KMZ PARSE (Hata Toleranslı Döngü)
+// KMZ PARSE (Hata Toleranslı)
 // ---------------------
 const parseKMZ = async (file: File): Promise<any> => {
   const zip = await JSZip.loadAsync(file);
   const files = Object.keys(zip.files);
 
+  // KML veya XML dosyalarını bul
   const kmlFiles = files.filter(f =>
-    f.toLowerCase().endsWith('.kml') &&
+    (f.toLowerCase().endsWith('.kml') || f.toLowerCase().endsWith('.xml')) &&
     !f.startsWith('._') &&
     !f.includes('__MACOSX')
   );
@@ -104,13 +105,13 @@ const parseKMZ = async (file: File): Promise<any> => {
         if (!imageExtensions.some(ext => lowerPath.endsWith(ext))) continue;
 
         const fileName = relativePath.split('/').pop();
-        // İçerik kontrolü (Hızlandırma)
         if (!fileName || !kmlContent.includes(fileName)) continue;
 
         const fileData = await zip.file(relativePath)?.async('blob');
         if (fileData) {
           const imageUrl = URL.createObjectURL(fileData);
           try {
+            // URL veya dosya adı eşleşmelerini değiştir
             const safePath = relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             kmlContent = kmlContent.replace(new RegExp(safePath, 'g'), imageUrl);
             
@@ -125,7 +126,7 @@ const parseKMZ = async (file: File): Promise<any> => {
       const parser = new DOMParser();
       const kmlDom = parser.parseFromString(kmlContent, 'text/xml');
 
-      validateKML(kmlDom); // Hata fırlatmaz, sadece uyarır
+      validateKML(kmlDom); 
 
       const geoJson = toGeoJSON.kml(kmlDom);
       
@@ -134,14 +135,11 @@ const parseKMZ = async (file: File): Promise<any> => {
       }
 
     } catch (err) {
-      // Tek bir dosya bozuksa bile diğerlerini denemeye devam et!
       console.warn(`KMZ içindeki ${kmlFileName} okunamadı, atlanıyor.`, err);
     }
   }
 
-  // Döngü bittiğinde hiç veri yoksa
   if (combinedFeatures.length === 0) {
-    // Hata fırlatmak yerine boş dönüyoruz, App.tsx halleder.
     return { type: 'FeatureCollection', features: [] };
   }
 
@@ -164,9 +162,10 @@ export const parseFile = async (file: File): Promise<any> => {
   try {
     const result = (type === FileType.KMZ) ? await parseKMZ(file) : await parseKML(file);
 
-    // Son kontrol: Veri boş mu?
     if (!result || !result.features || result.features.length === 0) {
-       throw new Error('Dosya okundu ancak içinde harita verisi (Çizim/Feature) bulunamadı.');
+       // Boş feature durumunda daha detaylı hata
+       console.warn("GeoJSON Sonuç:", result);
+       throw new Error('Dosya okundu ancak içinde harita verisi (Çizim/Feature) bulunamadı. Dosya sadece stil içeriyor veya koordinat sistemi desteklenmiyor olabilir.');
     }
     return result;
 
