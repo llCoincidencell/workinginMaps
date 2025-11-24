@@ -2,6 +2,9 @@ import JSZip from 'jszip';
 import * as toGeoJSON from '@tmcw/togeojson';
 import { FileType } from '../types';
 
+// ---------------------
+// DOSYA TİPİ TESPİTİ
+// ---------------------
 export const detectFileType = (filename: string): FileType => {
   const cleanName = filename.split('?')[0].toLowerCase();
 
@@ -11,48 +14,34 @@ export const detectFileType = (filename: string): FileType => {
 };
 
 // ---------------------
-// UTF-8 + Windows-1254 Çözücü
+// UTF-8 + WINDOWS-1254 ÇÖZÜCÜ
 // ---------------------
 const decodeText = (buffer: Uint8Array): string => {
   const decoderUTF8 = new TextDecoder('utf-8', { fatal: true });
+
   try {
     return decoderUTF8.decode(buffer);
   } catch (e) {
-    // UTF-8 başarısızsa Türkçe (Windows-1254) dene
     const decoderTR = new TextDecoder('windows-1254');
     return decoderTR.decode(buffer);
   }
 };
 
 // ---------------------
-// KML Temizleyici (GÜVENLİ VE HATA TOLERANSLI)
+// KML TEMİZLEYİCİ
 // ---------------------
 const cleanKMLText = (text: string): string => {
-  // CDATA bloklarını koru, sadece XML başlığını ve yorumları temizle.
-  // Namespace (xmlns) tanımlarını kaldırarak DOMParser uyumluluğunu artır.
   return text
-    .replace(/^\uFEFF/, '') // BOM temizle
-    .replace(/<!--[\s\S]*?-->/g, '') // Yorumları sil
-    .replace(/<\?xml.*?\?>/g, '') // XML başlığını sil (DOMParser bazen takılır)
-    .replace(/\s+xmlns(:[a-zA-Z0-9]+)?=(["']).*?\2/g, '') // xmlns="..." özelliklerini sil
-    .replace(/xmlns(:[a-zA-Z0-9]+)?="[^"]*"/g, '') // Basit xmlns silme (regex fallback)
-    // Sadece kaçış yapılmamış & işaretlerini düzelt (# ile başlayan entity'lere dokunma)
-    .replace(/&(?!amp;|lt;|gt;|quot;|apos;|#)/g, '&amp;') 
+    .replace(/^\uFEFF/, '') // BOM
+    .replace(/<!--[\s\S]*?-->/g, '') // yorumlar
+    .replace(/<\?xml.*?\?>/g, '') // xml header
+    .replace(/\s+xmlns(:[a-zA-Z0-9]+)?=(["']).*?\2/g, '') // namespace
+    .replace(/&(?!amp;|lt;|gt;|quot;|apos;|#)/g, '&amp;') // hatalı &
     .trim();
 };
 
 // ---------------------
-// KML Doğrulayıcı
-// ---------------------
-const validateKML = (kmlDom: Document) => {
-  const parserError = kmlDom.querySelector('parsererror');
-  if (parserError) {
-    console.error("XML Parser Hatası:", parserError.textContent);
-  }
-};
-
-// ---------------------
-// KML PARSE
+// KML PARSE — GÜÇLENDİRİLMİŞ
 // ---------------------
 const parseKML = async (file: File): Promise<any> => {
   const buffer = await file.arrayBuffer();
@@ -60,92 +49,66 @@ const parseKML = async (file: File): Promise<any> => {
   text = cleanKMLText(text);
 
   const parser = new DOMParser();
-  const kmlDom = parser.parseFromString(text, 'text/xml');
+  const dom = parser.parseFromString(text, 'text/xml');
 
-  validateKML(kmlDom);
+  // 🌟 Placemark say
+  const placemarks = dom.getElementsByTagName('Placemark');
+  console.log("KML içindeki Placemark sayısı:", placemarks.length);
 
-  return toGeoJSON.kml(kmlDom);
+  const geo = toGeoJSON.kml(dom);
+
+  return {
+    type: "FeatureCollection",
+    features: geo?.features || []
+  };
 };
 
 // ---------------------
-// KMZ PARSE (Hata Toleranslı)
+// KMZ PARSE — GÜÇLENDİRİLMİŞ
 // ---------------------
 const parseKMZ = async (file: File): Promise<any> => {
   const zip = await JSZip.loadAsync(file);
   const files = Object.keys(zip.files);
 
-  // KML veya XML dosyalarını bul
   const kmlFiles = files.filter(f =>
-    (f.toLowerCase().endsWith('.kml') || f.toLowerCase().endsWith('.xml')) &&
-    !f.startsWith('._') &&
-    !f.includes('__MACOSX')
+    (f.endsWith('.kml') || f.endsWith('.xml')) &&
+    !f.includes('__MACOSX') &&
+    !f.startsWith('._')
   );
 
-  if (kmlFiles.length === 0) {
-    throw new Error('Geçersiz KMZ: Arşiv içinde okunabilir bir KML dosyası bulunamadı.');
-  }
+  console.log("KMZ İçindeki KML dosyaları:", kmlFiles);
 
-  const combinedFeatures: any[] = [];
-  const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
+  if (kmlFiles.length === 0)
+    return { type: "FeatureCollection", features: [] };
 
-  // TÜM KML DOSYALARINI TARA
-  for (const kmlFileName of kmlFiles) {
+  const allFeatures: any[] = [];
+
+  for (const name of kmlFiles) {
     try {
-      const kmlData = await zip.file(kmlFileName)?.async('uint8array');
-      if (!kmlData) continue;
+      const raw = await zip.file(name)?.async('uint8array');
+      if (!raw) continue;
 
-      let kmlContent = decodeText(kmlData);
-      kmlContent = cleanKMLText(kmlContent);
-
-      // Resim ikonlarını işle
-      for (const relativePath of files) {
-        if (relativePath.includes('__MACOSX') || relativePath.startsWith('._')) continue;
-
-        const lowerPath = relativePath.toLowerCase();
-        if (!imageExtensions.some(ext => lowerPath.endsWith(ext))) continue;
-
-        const fileName = relativePath.split('/').pop();
-        if (!fileName || !kmlContent.includes(fileName)) continue;
-
-        const fileData = await zip.file(relativePath)?.async('blob');
-        if (fileData) {
-          const imageUrl = URL.createObjectURL(fileData);
-          try {
-            // URL veya dosya adı eşleşmelerini değiştir
-            const safePath = relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            kmlContent = kmlContent.replace(new RegExp(safePath, 'g'), imageUrl);
-            
-            if (fileName !== relativePath) {
-                const safeFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                kmlContent = kmlContent.replace(new RegExp(safeFileName, 'g'), imageUrl);
-            }
-          } catch (e) { console.warn('Resim replace hatası:', e); }
-        }
-      }
+      let text = decodeText(raw);
+      text = cleanKMLText(text);
 
       const parser = new DOMParser();
-      const kmlDom = parser.parseFromString(kmlContent, 'text/xml');
+      const dom = parser.parseFromString(text, 'text/xml');
 
-      validateKML(kmlDom); 
+      // 🌟 Placemark sayım
+      const placemarks = dom.getElementsByTagName('Placemark');
+      console.log(`${name} içindeki Placemark sayısı:`, placemarks.length);
 
-      const geoJson = toGeoJSON.kml(kmlDom);
-      
-      if (geoJson && geoJson.features) {
-        combinedFeatures.push(...geoJson.features);
-      }
+      const geo = toGeoJSON.kml(dom);
+      if (geo?.features) allFeatures.push(...geo.features);
 
     } catch (err) {
-      console.warn(`KMZ içindeki ${kmlFileName} okunamadı, atlanıyor.`, err);
+      console.warn("KMZ içindeki bir KML parse edilemedi:", name);
     }
   }
 
-  if (combinedFeatures.length === 0) {
-    return { type: 'FeatureCollection', features: [] };
-  }
-
   return {
-    type: 'FeatureCollection',
-    features: combinedFeatures
+    type: "FeatureCollection",
+    features: allFeatures
   };
 };
 
@@ -155,29 +118,28 @@ const parseKMZ = async (file: File): Promise<any> => {
 export const parseFile = async (file: File): Promise<any> => {
   const type = detectFileType(file.name);
 
-  if (type === FileType.UNKNOWN) {
-    throw new Error('Desteklenmeyen dosya formatı. Lütfen .kml veya .kmz dosyası yükleyin.');
+  if (type === FileType.UNKNOWN)
+    throw new Error("Sadece .kml veya .kmz yükleyebilirsin.");
+
+  let result = (type === FileType.KMZ)
+    ? await parseKMZ(file)
+    : await parseKML(file);
+
+  // ❗ Asla hata fırlatma — kullanıcı dostu rapor döner
+  if (!result?.features || result.features.length === 0) {
+    return {
+      type: "FeatureCollection",
+      features: [],
+      message: "Dosya okundu fakat çizim/Placemark bulunamadı. Dosya muhtemelen sadece stil/ikon içeriyor."
+    };
   }
 
-  try {
-    const result = (type === FileType.KMZ) ? await parseKMZ(file) : await parseKML(file);
-
-    if (!result || !result.features || result.features.length === 0) {
-       // Boş feature durumunda daha detaylı hata
-       console.warn("GeoJSON Sonuç:", result);
-       throw new Error('Dosya okundu ancak içinde harita verisi (Çizim/Feature) bulunamadı. Dosya sadece stil içeriyor veya koordinat sistemi desteklenmiyor olabilir.');
-    }
-    return result;
-
-  } catch (e: any) {
-    const msg = e.message || '';
-    if (msg.includes('Corrupted zip') || msg.includes('End of data')) {
-      throw new Error('Dosya bozuk veya eksik indirilmiş.');
-    }
-    throw e;
-  }
+  return result;
 };
 
+// ---------------------
+// RENK
+// ---------------------
 export const getRandomColor = () => {
   const colors = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef', '#f43f5e'];
   return colors[Math.floor(Math.random() * colors.length)];
