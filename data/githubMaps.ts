@@ -14,11 +14,11 @@ const getUrl = (filename: string) =>
 // Harita listesi (RAW linkler)
 export const githubMaps = [
   getUrl('BOKA.kmz'),
-  getUrl('OVALAR%20(4).kmz'),
+  getUrl('OVALAR4.kmz'),
   getUrl('SU%20TAHSİS%20ALANLARI%20(9).kmz'),
    getUrl('SU_tahsis.alanlari.kmz'),
   getUrl('tum_korunan_alanlar.kmz'),
-  getUrl('OVALAR.kmz')
+  getUrl('OVALAR4.kmz')
 ];
 
 // Çalıştırıldığında üretilen RAW URL'ler:
