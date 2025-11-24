@@ -26,3 +26,4 @@ export const githubMaps = [
 // https://raw.githubusercontent.com/llCoincidencell/workinginMaps/main/OVALAR%20(4).kmz
 // https://raw.githubusercontent.com/llCoincidencell/workinginMaps/main/SU%20TAHSİS%20ALANLARI%20(9).kmz
 // https://raw.githubusercontent.com/llCoincidencell/workinginMaps/main/tum_korunan_alanlar.kmz
+// https://raw.githubusercontent.com/llCoincidencell/workinginMaps/main/OVALAR4.kmz
