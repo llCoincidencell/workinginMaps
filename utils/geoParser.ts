@@ -31,29 +31,39 @@ const decodeText = (buffer: Uint8Array): string => {
 // KML TEMİZLEYİCİ
 // ---------------------
 const cleanKMLText = (text: string): string => {
-  return text
-    .replace(/^\uFEFF/, '') // BOM
-    .replace(/<!--[\s\S]*?-->/g, '') // yorumlar
-    .replace(/<\?xml.*?\?>/g, '') // xml header
-    .replace(/\s+xmlns(:[a-zA-Z0-9]+)?=(["']).*?\2/g, '') // namespace
-    .replace(/&(?!amp;|lt;|gt;|quot;|apos;|#)/g, '&amp;') // hatalı &
-    .trim();
+  let clean = text.replace(/^\uFEFF/, '');
+
+  clean = clean.replace(/<\?xml[^>]*\?>/g, '');
+  clean = clean.replace(/xmlns(:[a-zA-Z0-9-_]+)?="[^"]*"/g, '');
+  clean = clean.replace(/xmlns(:[a-zA-Z0-9-_]+)?='[^']*'/g, '');
+
+  clean = clean.replace(/<(\/?)\s*[a-zA-Z0-9-_]+\s*:\s*([a-zA-Z0-9-_]+)/g, '<$1$2');
+
+  clean = clean.replace(/&(?!amp;|lt;|gt;|quot;|apos;|#)/g, '&amp;');
+
+  return clean.trim();
 };
 
 // ---------------------
-// KML PARSE — GÜÇLENDİRİLMİŞ
+// KML PARSE
 // ---------------------
-const parseKML = async (file: File): Promise<any> => {
+const parseKML = async (file: File | Blob): Promise<any> => {
   const buffer = await file.arrayBuffer();
   let text = decodeText(new Uint8Array(buffer));
+
+  if (text.includes('<NetworkLink>')) {
+    console.warn("Dosya içinde NetworkLink tespit edildi.");
+  }
+
   text = cleanKMLText(text);
 
   const parser = new DOMParser();
   const dom = parser.parseFromString(text, 'text/xml');
 
-  // 🌟 Placemark say
-  const placemarks = dom.getElementsByTagName('Placemark');
-  console.log("KML içindeki Placemark sayısı:", placemarks.length);
+  const parseError = dom.querySelector('parsererror');
+  if (parseError) {
+    console.error("XML Parse Hatası:", parseError.textContent);
+  }
 
   const geo = toGeoJSON.kml(dom);
 
@@ -64,45 +74,42 @@ const parseKML = async (file: File): Promise<any> => {
 };
 
 // ---------------------
-// KMZ PARSE — GÜÇLENDİRİLMİŞ
+// KMZ PARSE
 // ---------------------
 const parseKMZ = async (file: File): Promise<any> => {
   const zip = await JSZip.loadAsync(file);
   const files = Object.keys(zip.files);
-
-  const kmlFiles = files.filter(f =>
-    (f.endsWith('.kml') || f.endsWith('.xml')) &&
-    !f.includes('__MACOSX') &&
-    !f.startsWith('._')
-  );
-
-  console.log("KMZ İçindeki KML dosyaları:", kmlFiles);
-
-  if (kmlFiles.length === 0)
-    return { type: "FeatureCollection", features: [] };
-
   const allFeatures: any[] = [];
+  let foundKml = false;
 
-  for (const name of kmlFiles) {
+  const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.tiff', '.bmp', '.icons'];
+
+  for (const filename of files) {
+    const lowerName = filename.toLowerCase();
+
+    if (filename.endsWith('/') || filename.startsWith('__MACOSX') || filename.startsWith('._')) continue;
+    if (imageExtensions.some(ext => lowerName.endsWith(ext))) continue;
+
     try {
-      const raw = await zip.file(name)?.async('uint8array');
+      const raw = await zip.file(filename)?.async('uint8array');
       if (!raw) continue;
 
       let text = decodeText(raw);
+
+      if (!text.includes('<') || !text.includes('>')) continue;
+
       text = cleanKMLText(text);
 
       const parser = new DOMParser();
       const dom = parser.parseFromString(text, 'text/xml');
-
-      // 🌟 Placemark sayım
-      const placemarks = dom.getElementsByTagName('Placemark');
-      console.log(`${name} içindeki Placemark sayısı:`, placemarks.length);
-
       const geo = toGeoJSON.kml(dom);
-      if (geo?.features) allFeatures.push(...geo.features);
 
+      if (geo?.features && geo.features.length > 0) {
+        allFeatures.push(...geo.features);
+        foundKml = true;
+      }
     } catch (err) {
-      console.warn("KMZ içindeki bir KML parse edilemedi:", name);
+      console.warn(`Dosya okunamadı (${filename}):`, err);
     }
   }
 
@@ -113,32 +120,52 @@ const parseKMZ = async (file: File): Promise<any> => {
 };
 
 // ---------------------
+// GEÇERLİ GEOMETRİ KONTROLÜ
+// ---------------------
+const hasValidGeometry = (features: any[]): boolean => {
+  return features.some(f =>
+    f.geometry &&
+    (
+      f.geometry.type === "Polygon" ||
+      f.geometry.type === "MultiPolygon" ||
+      f.geometry.type === "Point" ||
+      f.geometry.type === "LineString" ||
+      f.geometry.type === "MultiLineString"
+    )
+  );
+};
+
+// ---------------------
 // DOSYA ROUTER
 // ---------------------
 export const parseFile = async (file: File): Promise<any> => {
   const type = detectFileType(file.name);
 
-  if (type === FileType.UNKNOWN)
-    throw new Error("Sadece .kml veya .kmz yükleyebilirsin.");
+  let result;
 
-  let result = (type === FileType.KMZ)
-    ? await parseKMZ(file)
-    : await parseKML(file);
+  try {
+    if (type === FileType.KMZ) result = await parseKMZ(file);
+    else result = await parseKML(file);
+  } catch (error) {
+    console.error("Parse İşlemi Hatası:", error);
+    throw new Error("Dosya formatı bozuk veya okunamıyor.");
+  }
 
-  // ❗ Asla hata fırlatma — kullanıcı dostu rapor döner
-  if (!result?.features || result.features.length === 0) {
-    return {
-      type: "FeatureCollection",
-      features: [],
-      message: "Dosya okundu fakat çizim/Placemark bulunamadı. Dosya muhtemelen sadece stil/ikon içeriyor."
-    };
+  const features = result?.features ?? [];
+
+  // ❗ Burada düzeltme var
+  if (!hasValidGeometry(features)) {
+    throw new Error(
+      "Dosya içeriği okundu ancak harita çizimi (Polygon/Point/Line) bulunamadı. " +
+      "Dosya sadece resim içeriyor olabilir veya NetworkLink bağlantısı olabilir."
+    );
   }
 
   return result;
 };
 
 // ---------------------
-// RENK
+// RENK OLUŞTURUCU
 // ---------------------
 export const getRandomColor = () => {
   const colors = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef', '#f43f5e'];
