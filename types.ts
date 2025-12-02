@@ -1,4 +1,4 @@
-import { FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
+import type { FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
 
 export interface MapLayer {
   id: string;
@@ -17,5 +17,6 @@ export interface AnalysisResult {
 export enum FileType {
   KML = 'kml',
   KMZ = 'kmz',
+  GEOJSON = 'geojson',
   UNKNOWN = 'unknown'
 }
