@@ -1,5 +1,5 @@
 import type { FeatureCollection, Geometry, Position } from 'geojson';
-import { MapLayer } from '../types';
+import type { MapLayer } from '../types';
 
 // Bir noktanın bir poligon içinde olup olmadığını kontrol eden Ray-Casting algoritması
 const isPointInPolygon = (point: Position, vs: Position[]): boolean => {
@@ -20,9 +20,10 @@ const extractPoints = (geometry: Geometry): Position[] => {
   const points: Position[] = [];
 
   if (geometry.type === 'Point') {
+    // GeoJSON tiplerinde coordinates bazen number[] bazen number[][] olabiliyor,
+    // burada güvenli dönüşüm (cast) yapıyoruz.
     points.push(geometry.coordinates as Position);
   } else if (geometry.type === 'Polygon') {
-    // Polygon coordinates: [ [x,y], [x,y], ... ] (Ring)
     const poly = geometry.coordinates as Position[][];
     if (poly.length > 0) points.push(poly[0][0]); 
   } else if (geometry.type === 'LineString') {
