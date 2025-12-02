@@ -1,16 +1,6 @@
-// BU DOSYA GÖMÜLÜ GEOJSON VERİSİNİ TUTAR
-// CORS veya Ağ hatalarından etkilenmez.
-
 export const OVALAR_DATA = {
   "type": "FeatureCollection",
-  "name": "OVALAR",
   "features": [
-    // ---------------------------------------------------------
-    // BURAYA OVALAR.geojson DOSYANIZIN İÇERİĞİNİ YAPIŞTIRIN
-    // features: [ ... ] dizisinin içi dolu olmalıdır.
-    // Örnek veri (Bunu silip kendi verinizi yapıştırın):
-    // ---------------------------------------------------------
-
 {
   "type": "FeatureCollection",
   "features": [
@@ -7711,7 +7701,8 @@ export const OVALAR_DATA = {
             ]
           ]
         ]
-      }
+      },
+      "id": 0
     },
     {
       "type": "Feature",
