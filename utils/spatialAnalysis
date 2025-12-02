@@ -1,5 +1,4 @@
-
-import { FeatureCollection, Geometry, Position } from 'geojson';
+import type { FeatureCollection, Geometry, Position } from 'geojson';
 import { MapLayer } from '../types';
 
 // Bir noktanın bir poligon içinde olup olmadığını kontrol eden Ray-Casting algoritması
@@ -21,14 +20,19 @@ const extractPoints = (geometry: Geometry): Position[] => {
   const points: Position[] = [];
 
   if (geometry.type === 'Point') {
-    points.push(geometry.coordinates);
+    points.push(geometry.coordinates as Position);
   } else if (geometry.type === 'Polygon') {
-    points.push(geometry.coordinates[0][0]); 
+    // Polygon coordinates: [ [x,y], [x,y], ... ] (Ring)
+    const poly = geometry.coordinates as Position[][];
+    if (poly.length > 0) points.push(poly[0][0]); 
   } else if (geometry.type === 'LineString') {
-    points.push(geometry.coordinates[0]); 
-    points.push(geometry.coordinates[geometry.coordinates.length - 1]); 
+    const line = geometry.coordinates as Position[];
+    if (line.length > 0) {
+        points.push(line[0]); 
+        points.push(line[line.length - 1]); 
+    }
   } else if (geometry.type === 'MultiPoint') {
-    points.push(...geometry.coordinates);
+    points.push(...(geometry.coordinates as Position[]));
   } else if (geometry.type === 'GeometryCollection') {
     geometry.geometries.forEach(g => points.push(...extractPoints(g)));
   }
@@ -61,13 +65,13 @@ export const checkIntersections = (newData: FeatureCollection, existingLayers: M
       if (!feature.geometry) return;
 
       if (feature.geometry.type === 'Polygon') {
-        const polygonRing = feature.geometry.coordinates[0];
+        const polygonRing = (feature.geometry.coordinates as Position[][])[0];
         if (testPoints.some(p => isPointInPolygon(p, polygonRing))) {
           isInsideLayer = true;
         }
       } 
       else if (feature.geometry.type === 'MultiPolygon') {
-        feature.geometry.coordinates.forEach(polygon => {
+        (feature.geometry.coordinates as Position[][][]).forEach(polygon => {
           const polygonRing = polygon[0];
           if (testPoints.some(p => isPointInPolygon(p, polygonRing))) {
             isInsideLayer = true;
@@ -94,9 +98,9 @@ export const checkCoverage = (newPolygonData: FeatureCollection, existingLayers:
   newPolygonData.features.forEach(feature => {
     if (!feature.geometry) return;
     if (feature.geometry.type === 'Polygon') {
-      polygons.push(feature.geometry.coordinates[0]);
+      polygons.push((feature.geometry.coordinates as Position[][])[0]);
     } else if (feature.geometry.type === 'MultiPolygon') {
-      feature.geometry.coordinates.forEach(poly => polygons.push(poly[0]));
+      (feature.geometry.coordinates as Position[][][]).forEach(poly => polygons.push(poly[0]));
     }
   });
 
