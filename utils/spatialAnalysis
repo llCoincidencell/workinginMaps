@@ -1,5 +1,4 @@
-import type { FeatureCollection, Geometry, Position } from 'geojson';
-import type { MapLayer } from '../types';
+import { MapLayer, FeatureCollection, Geometry, Position } from '../types';
 
 // Bir noktanın bir poligon içinde olup olmadığını kontrol eden Ray-Casting algoritması
 const isPointInPolygon = (point: Position, vs: Position[]): boolean => {
@@ -35,7 +34,9 @@ const extractPoints = (geometry: Geometry): Position[] => {
   } else if (geometry.type === 'MultiPoint') {
     points.push(...(geometry.coordinates as Position[]));
   } else if (geometry.type === 'GeometryCollection') {
-    geometry.geometries.forEach(g => points.push(...extractPoints(g)));
+    // GeometryCollection içindeki geometries dizisi için tip kontrolü yapmıyoruz (any)
+    // çünkü recursive yapı tipleri zorluyor.
+    (geometry as any).geometries.forEach((g: any) => points.push(...extractPoints(g)));
   }
   
   return points;
