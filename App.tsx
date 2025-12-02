@@ -1,5 +1,6 @@
+
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Layers, Menu, Globe2, AlertCircle, X, CloudDownload, Check, Loader2 } from 'lucide-react';
+import { Upload, Layers, Menu, Globe2, AlertCircle, X, CloudDownload, Check, Loader2, Database } from 'lucide-react';
 import { MapView } from './components/MapView';
 import { LayerList } from './components/LayerList';
 import { ResultModal } from './components/ResultModal';
@@ -46,6 +47,51 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // --- GÖMÜLÜ HARİTA YÜKLEME ---
+  const loadEmbeddedMap = (name: string, data: any) => {
+    if (layers.some(l => l.name === name)) {
+      alert("Bu harita zaten yüklü.");
+      return;
+    }
+
+    try {
+      // Veri zaten JSON formatında olduğu için parse etmeye gerek yok
+      // Ancak formatını kontrol edelim
+      let geoJsonData = data;
+      
+      // Eğer FeatureCollection değilse uyduralım (GeoParser mantığı gibi)
+      if (!geoJsonData.type) {
+         throw new Error("Gömülü veri geçersiz formatta.");
+      }
+
+      const coveredLayers = checkCoverage(geoJsonData, layers);
+      if (coveredLayers.length > 0) {
+        setAnalysisResult({
+          isOpen: true,
+          results: coveredLayers,
+          fileName: name,
+          type: 'coverage'
+        });
+      }
+
+      const newLayer: MapLayer = {
+        id: uuidv4(),
+        name: name,
+        visible: true,
+        data: geoJsonData,
+        color: getRandomColor()
+      };
+
+      setLayers(prev => [...prev, newLayer]);
+      if (isMobile) setIsSidebarOpen(false);
+
+    } catch (err: any) {
+      console.error("Gömülü harita hatası:", err);
+      setError("Gömülü veri yüklenirken hata oluştu: " + err.message);
+    }
+  };
+
+  // --- UZAKTAN HARİTA YÜKLEME ---
   const loadRemoteMap = async (name: string, url: string) => {
     if (layers.some(l => l.name === name)) {
       alert("Bu harita zaten yüklü.");
@@ -56,22 +102,62 @@ const App: React.FC = () => {
     setError(null);
 
     try {
-      const fetchUrl = `${url}?t=${Date.now()}`;
-      const response = await fetch(fetchUrl);
+      let response: Response | undefined;
       
-      if (!response.ok) {
-        if (response.status === 404) throw new Error(`Dosya bulunamadı (404). İsmi kontrol edin: ${url}`);
-        throw new Error(`İndirme hatası (${response.status})`);
+      const tryFetch = async (fetchUrl: string) => {
+        const res = await fetch(fetchUrl);
+        if (!res.ok) throw new Error(`HTTP Status ${res.status}`);
+        return res;
+      };
+
+      try {
+        const directUrl = url.includes('?') ? `${url}&t=${Date.now()}` : `${url}?t=${Date.now()}`;
+        console.log(`[1/3] Doğrudan indiriliyor: ${directUrl}`);
+        response = await tryFetch(directUrl);
+      } catch (directError) {
+        console.warn("[1/3] Doğrudan indirme başarısız, Proxy 1 deneniyor...", directError);
+        try {
+          const proxyUrl1 = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+          console.log(`[2/3] Proxy 1 (CorsProxy) deneniyor: ${proxyUrl1}`);
+          response = await tryFetch(proxyUrl1);
+        } catch (proxy1Error) {
+          console.warn("[2/3] Proxy 1 başarısız, Proxy 2 deneniyor...", proxy1Error);
+          const proxyUrl2 = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+          console.log(`[3/3] Proxy 2 (AllOrigins) deneniyor: ${proxyUrl2}`);
+          response = await tryFetch(proxyUrl2);
+        }
+      }
+      
+      if (!response || !response.ok) {
+        throw new Error(`Dosya indirilemedi. Tüm yöntemler başarısız oldu.`);
       }
       
       const blob = await response.blob();
+
       if (blob.size < 100) {
-        throw new Error(`Dosya boş veya çok küçük (${blob.size} byte).`);
+        throw new Error(`İndirilen dosya çok küçük veya boş (${blob.size} byte).`);
       }
 
-      let filename = url.substring(url.lastIndexOf('/') + 1) || 'harita.kml';
-      filename = decodeURIComponent(filename).split('?')[0];
+      let filename = '';
+      const disposition = response.headers.get('Content-Disposition');
+      if (disposition && disposition.indexOf('attachment') !== -1) {
+          const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+          const matches = filenameRegex.exec(disposition);
+          if (matches != null && matches[1]) { 
+            filename = matches[1].replace(/['"]/g, '');
+          }
+      }
 
+      if (!filename) {
+         const cleanUrl = url.split('?')[0];
+         filename = cleanUrl.substring(cleanUrl.lastIndexOf('/') + 1);
+      }
+
+      if (!filename.toLowerCase().endsWith('.kml') && !filename.toLowerCase().endsWith('.kmz') && !filename.toLowerCase().endsWith('.geojson')) {
+         filename += '.kmz';
+      }
+      
+      filename = decodeURIComponent(filename);
       const file = new File([blob], filename, { type: blob.type });
       const geoJsonData = await parseFile(file);
       
@@ -79,9 +165,6 @@ const App: React.FC = () => {
       if (featureCount === 0) {
         throw new Error("Dosya indirildi ancak içinde harita verisi (Feature) bulunamadı.");
       }
-
-      // BAŞARILI BİLGİLENDİRME
-      // alert(`${name} başarıyla yüklendi! (${featureCount} adet çizim)`);
 
       const coveredLayers = checkCoverage(geoJsonData, layers);
       if (coveredLayers.length > 0) {
@@ -106,7 +189,11 @@ const App: React.FC = () => {
 
     } catch (err: any) {
       console.error("Yükleme hatası:", err);
-      setError(`Hata: ${err.message}`);
+      let msg = err.message;
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        msg = "İndirme başarısız. Siteye erişim engelli veya CORS hatası var. (Tüm proxy yöntemleri denendi)";
+      }
+      setError(msg);
     } finally {
       setLoadingMapUrl(null);
     }
@@ -210,18 +297,27 @@ const App: React.FC = () => {
           <div className="mb-6">
             <div className="flex items-center gap-2 text-gray-800 font-semibold text-sm mb-3">
               <CloudDownload size={16} className="text-indigo-600" />
-              <h2>Hazır Haritalar (Bulut)</h2>
+              <h2>Hazır Haritalar</h2>
             </div>
             
             <div className="grid grid-cols-1 gap-2">
               {availableMaps.map((map) => {
                 const isLoaded = layers.some(l => l.name === map.name);
-                const isLoadingThis = loadingMapUrl === map.url;
+                const isLoadingThis = loadingMapUrl === map.url && map.url !== null;
+                const isEmbedded = !!map.data;
 
                 return (
                   <button
-                    key={map.url}
-                    onClick={() => !isLoaded && loadRemoteMap(map.name, map.url)}
+                    key={map.name}
+                    onClick={() => {
+                      if (!isLoaded) {
+                        if (isEmbedded) {
+                          loadEmbeddedMap(map.name, map.data);
+                        } else if (map.url) {
+                          loadRemoteMap(map.name, map.url);
+                        }
+                      }
+                    }}
                     disabled={isLoaded || isLoadingThis}
                     className={`
                       flex items-center justify-between p-3 rounded-lg text-left text-sm transition-all border
@@ -230,7 +326,10 @@ const App: React.FC = () => {
                         : 'bg-white border-gray-200 hover:border-indigo-300 hover:shadow-sm text-gray-700 hover:bg-gray-50'}
                     `}
                   >
-                    <span className="font-medium truncate">{map.name}</span>
+                    <div className="flex items-center gap-2 overflow-hidden">
+                      {isEmbedded ? <Database size={14} className="text-orange-500 shrink-0" /> : null}
+                      <span className="font-medium truncate">{map.name}</span>
+                    </div>
                     
                     {isLoadingThis && <Loader2 size={16} className="animate-spin text-indigo-600" />}
                     {isLoaded && <Check size={16} className="text-green-600" />}
@@ -248,21 +347,21 @@ const App: React.FC = () => {
               <div className="flex flex-col items-center justify-center pt-3 pb-4">
                 <Upload className="w-6 h-6 mb-2 text-gray-400 group-hover:text-indigo-500 transition-colors" />
                 <p className="text-sm text-gray-500 font-medium group-hover:text-indigo-600">
-                  {loading ? 'İşleniyor...' : 'KML / KMZ Yükle'}
+                  {loading ? 'İşleniyor...' : 'Dosya Yükle'}
                 </p>
-                <p className="text-[10px] text-gray-400 mt-1">Konum Analizi Otomatik Yapılır</p>
+                <p className="text-[10px] text-gray-400 mt-1">KML / KMZ / GeoJSON</p>
               </div>
               <input 
                 ref={fileInputRef}
                 type="file" 
                 className="hidden" 
-                accept=".kml,.kmz" 
+                accept=".kml,.kmz,.geojson,.json" 
                 onChange={handleFileUpload}
                 disabled={loading}
               />
             </label>
             {error && (
-              <div className="mt-2 p-2 text-xs text-red-600 bg-red-50 rounded border border-red-100">
+              <div className="mt-2 p-2 text-xs text-red-600 bg-red-50 rounded border border-red-100 break-words">
                 {error}
               </div>
             )}
