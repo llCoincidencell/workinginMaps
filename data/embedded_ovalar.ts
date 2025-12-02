@@ -10,7 +10,8 @@ export const OVALAR_DATA = {
     // features: [ ... ] dizisinin içi dolu olmalıdır.
     // Örnek veri (Bunu silip kendi verinizi yapıştırın):
     // ---------------------------------------------------------
-    {
+
+{
   "type": "FeatureCollection",
   "features": [
     {
@@ -71425,8 +71426,3 @@ export const OVALAR_DATA = {
     }
   ]
 }
-      }
-    }
-    // --------------------------------------------------------
-  ]
-};
