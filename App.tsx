@@ -1,10 +1,9 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Layers, Menu, Globe2, AlertCircle, X, CloudDownload, Check, Loader2, Database } from 'lucide-react';
 import { MapView } from './components/MapView';
 import { LayerList } from './components/LayerList';
 import { ResultModal } from './components/ResultModal';
-import { parseFile, getRandomColor } from './utils/geoParser';
+import { parseFile, getRandomColor, normalizeGeoJSON } from './utils/geoParser';
 import { checkIntersections, checkCoverage } from './utils/spatialAnalysis';
 import { MapLayer } from './types';
 import { v4 as uuidv4 } from 'uuid';
@@ -55,13 +54,11 @@ const App: React.FC = () => {
     }
 
     try {
-      // Veri zaten JSON formatında olduğu için parse etmeye gerek yok
-      // Ancak formatını kontrol edelim
-      let geoJsonData = data;
+      // Veriyi normalize et (iç içe FeatureCollection hatalarını düzeltir)
+      const geoJsonData = normalizeGeoJSON(data);
       
-      // Eğer FeatureCollection değilse uyduralım (GeoParser mantığı gibi)
-      if (!geoJsonData.type) {
-         throw new Error("Gömülü veri geçersiz formatta.");
+      if (!geoJsonData.features || geoJsonData.features.length === 0) {
+         throw new Error("Gömülü veri içinde harita özelliği (Feature) bulunamadı.");
       }
 
       const coveredLayers = checkCoverage(geoJsonData, layers);
