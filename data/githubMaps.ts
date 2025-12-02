@@ -16,10 +16,9 @@ const getGitHubUrl = (filename: string) => {
 // url: Harici linkten çeker
 // data: Doğrudan kodun içinden (Gömülü) çeker
 const mapsConfig = [
-
+  { name: 'Bursa Ovası (Gömülü)', data: OVALAR_DATA },
   { name: 'BOKA Sınırları', filename: 'BOKA.kmz' },
   { name: 'Ovalar (GitHub)', filename: 'OVALAR (4).kmz' }, 
-  { name: 'Ovalar (GitHub)', filename: 'OVALAR.kmz' },
   { name: 'Su Tahsis Alanları', filename: 'SU TAHSİS ALANLARI (9).kmz' }, 
   { name: 'Tüm Korunan Alanlar', filename: 'tum_korunan_alanlar.kmz' }
 ];
